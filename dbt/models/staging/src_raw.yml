@@ -1,0 +1,42 @@
+version: 2
+
+sources:
+  - name: raw
+    database: SECSIGNAL
+    schema: RAW
+    tables:
+      - name: raw_companies
+        description: "CIK → ticker mapping for SEC-registered companies"
+        columns:
+          - name: CIK
+            tests:
+              - unique
+              - not_null
+      - name: raw_filings
+        description: "Filing metadata from EDGAR API"
+        columns:
+          - name: FILING_ID
+            tests:
+              - unique
+              - not_null
+      - name: raw_filing_sections
+        description: "Section-aware text extracted from filings"
+        columns:
+          - name: SECTION_ID
+            tests:
+              - unique
+              - not_null
+      - name: filing_images
+        description: "Chart/graph images extracted via AI_PARSE_DOCUMENT"
+        columns:
+          - name: IMAGE_ID
+            tests:
+              - unique
+              - not_null
+      - name: chart_extracts
+        description: "Structured data extracted from chart images via AI_EXTRACT"
+        columns:
+          - name: EXTRACT_ID
+            tests:
+              - unique
+              - not_null
