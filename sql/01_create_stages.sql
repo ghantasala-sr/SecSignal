@@ -6,21 +6,19 @@
 USE DATABASE SECSIGNAL;
 USE SCHEMA RAW;
 
--- ---------- External Stage: GCS raw filings ----------
--- Requires a storage integration. Create that first if it doesn't exist.
--- Replace <your_gcs_bucket> with the actual bucket name.
+-- ---------- Storage Integration: Snowflake → GCS ----------
+CREATE STORAGE INTEGRATION IF NOT EXISTS SECSIGNAL_GCS_INT
+    TYPE = EXTERNAL_STAGE
+    STORAGE_PROVIDER = 'GCS'
+    STORAGE_ALLOWED_LOCATIONS = ('gcs://secsignal-raw/')
+    ENABLED = TRUE;
 
--- CREATE STORAGE INTEGRATION IF NOT EXISTS SECSIGNAL_GCS_INT
---     TYPE = EXTERNAL_STAGE
---     STORAGE_PROVIDER = 'GCS'
---     STORAGE_ALLOWED_LOCATIONS = ('gcs://secsignal-raw/')
---     ENABLED = TRUE;
+-- After creating, run: DESCRIBE INTEGRATION SECSIGNAL_GCS_INT;
+-- Grant the STORAGE_GCP_SERVICE_ACCOUNT read access on the GCS bucket.
 
--- GRANT USAGE ON INTEGRATION SECSIGNAL_GCS_INT TO ROLE SECSIGNAL_ADMIN;
-
-CREATE STAGE IF NOT EXISTS RAW.GCS_FILINGS_STAGE
-    -- URL = 'gcs://secsignal-raw/'               -- uncomment after integration
-    -- STORAGE_INTEGRATION = SECSIGNAL_GCS_INT     -- uncomment after integration
+CREATE OR REPLACE STAGE RAW.GCS_FILINGS_STAGE
+    URL = 'gcs://secsignal-raw/'
+    STORAGE_INTEGRATION = SECSIGNAL_GCS_INT
     FILE_FORMAT = (TYPE = 'JSON')
     COMMENT = 'External stage pointing to GCS bucket with raw EDGAR filings';
 

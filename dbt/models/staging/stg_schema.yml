@@ -1,0 +1,98 @@
+version: 2
+
+models:
+  - name: stg_companies
+    description: "Cleaned company master — CIK, ticker, name"
+    columns:
+      - name: CIK
+        tests:
+          - unique
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null
+      - name: COMPANY_NAME
+        tests:
+          - not_null
+
+  - name: stg_filings
+    description: "Cleaned filing metadata — filtered to 10-K, 10-Q, 8-K"
+    columns:
+      - name: FILING_ID
+        tests:
+          - unique
+          - not_null
+      - name: CIK
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_companies')
+              field: CIK
+      - name: TICKER
+        tests:
+          - not_null
+      - name: FILING_TYPE
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['10-K', '10-Q', '8-K']
+      - name: FILING_DATE
+        tests:
+          - not_null
+
+  - name: stg_sections
+    description: "Cleaned filing sections — text > 50 chars, non-null"
+    columns:
+      - name: SECTION_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_filings')
+              field: FILING_ID
+      - name: SECTION_KEY
+        tests:
+          - not_null
+      - name: SECTION_TEXT
+        tests:
+          - not_null
+      - name: WORD_COUNT
+        tests:
+          - not_null
+
+  - name: stg_filing_images
+    description: "Cleaned chart/graph image metadata"
+    columns:
+      - name: IMAGE_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_filings')
+              field: FILING_ID
+
+  - name: stg_chart_extracts
+    description: "Cleaned chart extract metadata"
+    columns:
+      - name: EXTRACT_ID
+        tests:
+          - unique
+          - not_null
+      - name: IMAGE_ID
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_filing_images')
+              field: IMAGE_ID
+      - name: FILING_ID
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_filings')
+              field: FILING_ID

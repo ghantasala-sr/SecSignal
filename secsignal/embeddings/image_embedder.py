@@ -1,4 +1,4 @@
-"""Image embedding using Snowflake Cortex AI_EMBED with voyage-multimodal-3.
+"""Image embedding using Snowflake Cortex EMBED_TEXT_1024 with voyage-multimodal-3.
 
 Produces cross-modal embeddings that allow text queries to match chart images
 and vice versa. Both text and images are mapped to the same vector space.
@@ -20,7 +20,7 @@ EMBEDDING_DIM = 1024  # voyage-multimodal-3 output dimension
 
 
 class ImageEmbedder:
-    """Embed chart images using Cortex AI_EMBED with voyage-multimodal-3.
+    """Embed chart images using Cortex EMBED_TEXT_1024 with voyage-multimodal-3.
 
     Creates cross-modal vectors in the same space as text, enabling:
     - Text query → chart image retrieval
@@ -45,7 +45,7 @@ class ImageEmbedder:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT SNOWFLAKE.CORTEX.AI_EMBED(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
+                "SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
                 (self._model, data_uri),
             )
             row = cursor.fetchone()
@@ -70,7 +70,7 @@ class ImageEmbedder:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT SNOWFLAKE.CORTEX.AI_EMBED(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
+                "SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
                 (self._model, text),
             )
             row = cursor.fetchone()
@@ -117,7 +117,7 @@ class ImageEmbedder:
                          FILING_DATE, CHART_TYPE, DESCRIPTION, EMBEDDING)
                     SELECT
                         %s, %s, %s, %s, %s, %s, %s, %s,
-                        SNOWFLAKE.CORTEX.AI_EMBED(%s, %s)::VECTOR(FLOAT, 1024)
+                        SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, %s)::VECTOR(FLOAT, 1024)
                     """,
                     (
                         embedding_id,

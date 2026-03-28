@@ -16,8 +16,7 @@ SELECT
     fi.PAGE_NUMBER,
     fi.DESCRIPTION AS IMAGE_DESCRIPTION,
     DATE_TRUNC('quarter', f.FILING_DATE) AS FISCAL_QUARTER
-FROM {{ source('raw', 'chart_extracts') }} ce
-JOIN {{ source('raw', 'filing_images') }} fi ON ce.IMAGE_ID = fi.IMAGE_ID
+FROM {{ ref('stg_chart_extracts') }} ce
+JOIN {{ ref('stg_filing_images') }} fi ON ce.IMAGE_ID = fi.IMAGE_ID
 JOIN {{ ref('stg_filings') }} f ON ce.FILING_ID = f.FILING_ID
 JOIN {{ ref('stg_companies') }} c ON f.CIK = c.CIK
-WHERE ce.CONFIDENCE_SCORE > 0.3

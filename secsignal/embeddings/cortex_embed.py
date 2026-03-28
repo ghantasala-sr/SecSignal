@@ -98,7 +98,7 @@ class CortexEmbedder:
                     FILING_DATE,
                     VECTOR_COSINE_SIMILARITY(
                         EMBEDDING,
-                        SNOWFLAKE.CORTEX.AI_EMBED('snowflake-arctic-embed-l-v2.0-8k', %s)::VECTOR(FLOAT, 1024)
+                        SNOWFLAKE.CORTEX.EMBED_TEXT_1024('snowflake-arctic-embed-l-v2.0-8k', %s)::VECTOR(FLOAT, 1024)
                     ) AS similarity
                 FROM SECSIGNAL.RAW.TEXT_EMBEDDINGS
                 ORDER BY similarity DESC
@@ -137,7 +137,7 @@ class CortexEmbedder:
                     fi.IMAGE_DATA_B64,
                     VECTOR_COSINE_SIMILARITY(
                         ie.EMBEDDING,
-                        SNOWFLAKE.CORTEX.AI_EMBED('voyage-multimodal-3', %s)::VECTOR(FLOAT, 1024)
+                        SNOWFLAKE.CORTEX.EMBED_TEXT_1024('voyage-multimodal-3', %s)::VECTOR(FLOAT, 1024)
                     ) AS similarity
                 FROM SECSIGNAL.RAW.IMAGE_EMBEDDINGS ie
                 JOIN SECSIGNAL.RAW.FILING_IMAGES fi ON ie.IMAGE_ID = fi.IMAGE_ID

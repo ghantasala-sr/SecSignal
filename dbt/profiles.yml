@@ -6,8 +6,8 @@ secsignal:
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
       password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: SECSIGNAL_ADMIN
+      role: TRAINING_ROLE
       database: SECSIGNAL
-      warehouse: SECSIGNAL_WH
+      warehouse: LAB_WH
       schema: STAGING
       threads: 4

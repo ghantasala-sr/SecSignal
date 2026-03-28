@@ -66,14 +66,18 @@ class DocumentParser:
             ParsedDocument with text and image elements.
         """
         # AI_PARSE_DOCUMENT with LAYOUT mode extracts spatial layout + images
+        # TO_FILE needs (stage_name, relative_path)
+        # stage_path format: @SCHEMA.STAGE_NAME/dir/file.htm
+        path_no_at = stage_path.lstrip("@")
+        parts = path_no_at.split("/", 1)
+        stage_name = f"@{parts[0]}"
+        relative_path = parts[1] if len(parts) > 1 else ""
+
         query = f"""
-            SELECT SNOWFLAKE.CORTEX.AI_PARSE_DOCUMENT(
-                BUILD_SCOPED_FILE_URL('{stage_path}'),
-                {{
-                    'mode': 'LAYOUT',
-                    'extract_images': true
-                }}
-            ) AS parsed_result
+            SELECT TO_VARCHAR(SNOWFLAKE.CORTEX.AI_PARSE_DOCUMENT(
+                TO_FILE('{stage_name}', '{relative_path}'),
+                {{'mode': 'LAYOUT', 'extract_images': true}}
+            )) AS parsed_result
         """
 
         cursor = self._conn.cursor()

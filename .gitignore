@@ -28,6 +28,7 @@ env/
 *.pem
 *.key
 service-account-key.json
+secsignal-sa-key.json
 credentials.json
 
 # OS
@@ -53,3 +54,4 @@ htmlcov/
 *.csv
 *.parquet
 data/
+dbt/.user.yml

@@ -119,10 +119,16 @@ class FilingParser:
         )
 
     def _extract_sections(self, text: str) -> list[ParsedSection]:
-        """Extract Item sections from filing text using regex patterns."""
+        """Extract Item sections from filing text using regex patterns.
+
+        SEC EDGAR HTML filings contain a Table of Contents (TOC) where each
+        "Item N" entry is very short (header + page number).  The same item
+        headers appear again deeper in the document with full section content.
+        We find all matches, group by normalised item number, and keep the
+        longest text block for each item so the TOC entries are discarded.
+        """
         matches = list(_ITEM_PATTERN.finditer(text))
         if not matches:
-            # If no sections found, return the whole text as a single section
             return [
                 ParsedSection(
                     section=FilingSection.OTHER,
@@ -134,16 +140,29 @@ class FilingParser:
                 )
             ]
 
-        sections: list[ParsedSection] = []
+        # Build a candidate for every consecutive-match pair
+        candidates: list[tuple[str, str, str, int, int]] = []  # (item_num, title, text, start, end)
         for i, match in enumerate(matches):
             start = match.start()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
 
-            item_number = match.group(1)
+            item_number = match.group(1).lower()
             title = match.group(2).strip()
             section_text = text[start:end].strip()
-            header_text = f"item {item_number}"
+            candidates.append((item_number, title, section_text, start, end))
 
+        # Group by item number and keep the longest occurrence (skips TOC)
+        best: dict[str, tuple[str, str, str, int, int]] = {}
+        for item_num, title, section_text, start, end in candidates:
+            if item_num not in best or len(section_text) > len(best[item_num][2]):
+                best[item_num] = (item_num, title, section_text, start, end)
+
+        # Sort by document position (start offset) to preserve reading order
+        ordered = sorted(best.values(), key=lambda c: c[3])
+
+        sections: list[ParsedSection] = []
+        for item_num, title, section_text, start, end in ordered:
+            header_text = f"item {item_num}"
             sections.append(
                 ParsedSection(
                     section=FilingSection.from_header(header_text),

@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: int_parsed_sections
+    description: "Sections enriched with company and filing context — primary source for RAG embeddings"
+    columns:
+      - name: SECTION_ID
+        tests:
+          - unique
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null
+      - name: FILING_TYPE
+        tests:
+          - not_null
+      - name: FILING_DATE
+        tests:
+          - not_null
+      - name: SECTION_KEY
+        tests:
+          - not_null
+      - name: SECTION_TEXT
+        tests:
+          - not_null
+      - name: WORD_COUNT
+        tests:
+          - not_null
+
+  - name: int_chart_extracts
+    description: "Chart extracts enriched with filing and image context"
+    columns:
+      - name: EXTRACT_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null
+      - name: CONFIDENCE_SCORE
+        tests:
+          - not_null

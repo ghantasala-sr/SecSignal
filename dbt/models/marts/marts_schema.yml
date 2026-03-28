@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: fct_risk_factors
+    description: "Risk factor text per company per filing — used for anomaly detection and semantic search"
+    columns:
+      - name: RISK_FACTOR_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null
+      - name: RISK_FACTOR_TEXT
+        tests:
+          - not_null
+      - name: WORD_COUNT
+        tests:
+          - not_null
+
+  - name: fct_financials
+    description: "Financial sections per company per quarter (placeholder for XBRL extraction)"
+    columns:
+      - name: FILING_ID
+        tests:
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null
+      - name: SECTION_KEY
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['item_8']
+
+  - name: fct_chart_data
+    description: "Structured data extracted from filing charts"
+    columns:
+      - name: EXTRACT_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+
+  - name: dim_filing_images
+    description: "Dimension table mapping chart/graph images to filings and companies"
+    columns:
+      - name: IMAGE_ID
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        tests:
+          - not_null
+      - name: TICKER
+        tests:
+          - not_null

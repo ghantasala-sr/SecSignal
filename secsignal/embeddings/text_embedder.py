@@ -1,4 +1,4 @@
-"""Text embedding using Snowflake Cortex AI_EMBED with snowflake-arctic-embed-l-v2.0-8k.
+"""Text embedding using Snowflake Cortex EMBED_TEXT_1024 with snowflake-arctic-embed-l-v2.0-8k.
 
 Produces 1024-dimensional vectors for filing text chunks. Supports batching
 via SQL for efficient embedding of large document sets.
@@ -19,7 +19,7 @@ EMBEDDING_DIM = 1024
 
 
 class TextEmbedder:
-    """Embed text chunks using Cortex AI_EMBED with Arctic embed model.
+    """Embed text chunks using Cortex EMBED_TEXT_1024 with Arctic embed model.
 
     Vectors are 1024-dimensional, supporting up to 8K tokens per input.
     """
@@ -40,7 +40,7 @@ class TextEmbedder:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT SNOWFLAKE.CORTEX.AI_EMBED(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
+                "SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, %s)::VECTOR(FLOAT, 1024) AS emb",
                 (self._model, text),
             )
             row = cursor.fetchone()
@@ -84,7 +84,7 @@ class TextEmbedder:
                          TICKER, FILING_TYPE, FILING_DATE, EMBEDDING)
                     SELECT
                         %s, %s, %s, %s, %s, %s, %s, %s,
-                        SNOWFLAKE.CORTEX.AI_EMBED(%s, %s)::VECTOR(FLOAT, 1024)
+                        SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, %s)::VECTOR(FLOAT, 1024)
                     """,
                     (
                         chunk_id,
@@ -128,7 +128,7 @@ class TextEmbedder:
                     f.TICKER,
                     f.FILING_TYPE,
                     f.FILING_DATE,
-                    SNOWFLAKE.CORTEX.AI_EMBED(%s, s.SECTION_TEXT)::VECTOR(FLOAT, 1024)
+                    SNOWFLAKE.CORTEX.EMBED_TEXT_1024(%s, s.SECTION_TEXT)::VECTOR(FLOAT, 1024)
                 FROM SECSIGNAL.RAW.RAW_FILING_SECTIONS s
                 JOIN SECSIGNAL.RAW.RAW_FILINGS f ON s.FILING_ID = f.FILING_ID
                 WHERE s.FILING_ID = %s

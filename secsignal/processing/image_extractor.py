@@ -1,4 +1,9 @@
-"""Extract and store chart/graph images from AI_PARSE_DOCUMENT output."""
+"""Extract and store chart/graph images from filings.
+
+Supports two extraction modes:
+1. From AI_PARSE_DOCUMENT output (PDF filings) — base64 images in ParsedDocument
+2. From HTML filings — parse <img> tags and download referenced images from EDGAR
+"""
 
 from __future__ import annotations
 
@@ -7,8 +12,11 @@ import hashlib
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin
 
+import httpx
 import structlog
+from bs4 import BeautifulSoup
 
 from secsignal.processing.document_parser import ParsedDocument, ParsedElement
 
@@ -90,6 +98,103 @@ class ImageExtractor:
             "extracted_images",
             filing_id=parsed_doc.filing_id,
             total_image_elements=len(parsed_doc.image_elements),
+            kept=len(images),
+        )
+        return images
+
+    def extract_images_from_html(
+        self,
+        html_bytes: bytes,
+        filing_id: str,
+        document_url: str,
+        user_agent: str = "SecSignal agent@secsignal.dev",
+    ) -> list[ExtractedImage]:
+        """Extract images from an HTML filing by parsing <img> tags.
+
+        SEC EDGAR HTML filings reference images as separate files (e.g.,
+        aapl-20250927_g1.jpg). This method finds those references,
+        downloads the images from EDGAR, and returns them as ExtractedImage
+        objects with base64-encoded data.
+
+        Args:
+            html_bytes: Raw HTML content of the filing.
+            filing_id: Accession number for tracking.
+            document_url: Full URL of the filing document (used to resolve relative image paths).
+            user_agent: User-Agent string for EDGAR requests.
+
+        Returns:
+            List of ExtractedImage objects for images that pass size filtering.
+        """
+        import warnings
+        from bs4 import XMLParsedAsHTMLWarning
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
+        soup = BeautifulSoup(html_bytes, "lxml")
+        img_tags = soup.find_all("img")
+
+        if not img_tags:
+            logger.info("no_img_tags", filing_id=filing_id)
+            return []
+
+        # Resolve base URL from filing document URL
+        # e.g., https://www.sec.gov/Archives/edgar/data/.../aapl-20250927.htm
+        # Images are at same directory level
+        base_url = document_url.rsplit("/", 1)[0] + "/"
+
+        images: list[ExtractedImage] = []
+        headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
+
+        with httpx.Client(headers=headers, timeout=30.0) as client:
+            for i, img_tag in enumerate(img_tags):
+                src = img_tag.get("src", "")
+                if not src:
+                    continue
+
+                # Skip data URIs (already inline)
+                if src.startswith("data:"):
+                    continue
+
+                img_url = urljoin(base_url, src)
+                try:
+                    resp = client.get(img_url)
+                    resp.raise_for_status()
+                    raw_bytes = resp.content
+                except Exception:
+                    logger.warning("image_download_failed", url=img_url, filing_id=filing_id)
+                    continue
+
+                if len(raw_bytes) < self.MIN_IMAGE_SIZE_BYTES:
+                    logger.debug("skipping_small_image", size=len(raw_bytes), url=img_url)
+                    continue
+
+                image_format = self._detect_format(raw_bytes)
+                image_id = self._generate_image_id(filing_id, i)
+                image_data_b64 = base64.b64encode(raw_bytes).decode("ascii")
+
+                images.append(
+                    ExtractedImage(
+                        image_id=image_id,
+                        filing_id=filing_id,
+                        image_index=i,
+                        image_data_b64=image_data_b64,
+                        image_format=image_format,
+                        page_number=0,  # HTML doesn't have page numbers
+                        bounding_box=None,
+                        size_bytes=len(raw_bytes),
+                    )
+                )
+                logger.info(
+                    "downloaded_image",
+                    filing_id=filing_id,
+                    url=img_url,
+                    size=len(raw_bytes),
+                    format=image_format,
+                )
+
+        logger.info(
+            "extracted_images_from_html",
+            filing_id=filing_id,
+            img_tags=len(img_tags),
             kept=len(images),
         )
         return images
