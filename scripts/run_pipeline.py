@@ -53,7 +53,7 @@ log = structlog.get_logger("pipeline")
 # ---------------------------------------------------------------------------
 DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"]
 DEFAULT_MAX_FILINGS = 5
-FILING_TYPES = ("10-K", "10-Q")
+FILING_TYPES = ("10-K", "10-Q", "8-K")
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 200
 
@@ -131,8 +131,16 @@ def insert_sections(conn, filing_id: str, sections) -> int:
     cur = conn.cursor()
     inserted = 0
     try:
+        seen_keys: dict[str, int] = {}
         for sec in sections:
-            section_id = f"{filing_id}_{sec.section.value}"
+            # Disambiguate when multiple sections share the same enum
+            # (e.g. items 10, 11, 12 all map to "other")
+            key = sec.section.value
+            seen_keys[key] = seen_keys.get(key, 0) + 1
+            if seen_keys[key] > 1:
+                section_id = f"{filing_id}_{key}_{seen_keys[key]}"
+            else:
+                section_id = f"{filing_id}_{key}"
             # Skip if already exists
             cur.execute(
                 "SELECT 1 FROM SECSIGNAL.RAW.RAW_FILING_SECTIONS WHERE SECTION_ID = %s",
@@ -275,12 +283,13 @@ def run_dbt_build() -> bool:
         return False
 
     log.info("running_dbt_build", dbt_dir=str(dbt_dir))
+    env = {**os.environ, "SF_SKIP_TOKEN_FILE_PERMISSIONS_VERIFICATION": "true"}
     result = subprocess.run(
         [str(dbt_bin), "build", "--profiles-dir", "."],
         cwd=str(dbt_dir),
         capture_output=True,
         text=True,
-        env={**os.environ},
+        env=env,
     )
 
     if result.returncode != 0:

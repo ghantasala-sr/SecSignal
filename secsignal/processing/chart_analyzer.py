@@ -106,8 +106,16 @@ class ChartAnalyzer:
             return 0
 
         cursor = self._conn.cursor()
+        inserted = 0
         try:
             for ext in extracts:
+                # Skip if already stored (idempotent re-runs)
+                cursor.execute(
+                    "SELECT 1 FROM SECSIGNAL.RAW.CHART_EXTRACTS WHERE IMAGE_ID = %s",
+                    (ext.image_id,),
+                )
+                if cursor.fetchone():
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO SECSIGNAL.RAW.CHART_EXTRACTS
@@ -126,7 +134,8 @@ class ChartAnalyzer:
                         ext.confidence_score,
                     ),
                 )
-            return len(extracts)
+                inserted += 1
+            return inserted
         finally:
             cursor.close()
 

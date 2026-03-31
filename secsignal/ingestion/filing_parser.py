@@ -26,19 +26,24 @@ class FilingSection(str, Enum):
 
     @classmethod
     def from_header(cls, header_text: str) -> FilingSection:
-        """Map a section header string to an enum value."""
+        """Map a section header string to an enum value.
+
+        Uses regex word-boundary matching so that 'item 1' does not
+        accidentally match 'item 10', 'item 11', etc.
+        """
         text = header_text.lower().strip()
-        mapping = {
-            "item 1a": cls.RISK_FACTORS,
-            "item 1": cls.BUSINESS,
-            "item 2": cls.PROPERTIES,
-            "item 3": cls.LEGAL_PROCEEDINGS,
-            "item 7": cls.MDA,
-            "item 8": cls.FINANCIAL_STATEMENTS,
-            "item 9a": cls.CONTROLS,
-        }
-        for pattern, section in mapping.items():
-            if pattern in text:
+        # Order matters: check longer patterns first (1a before 1, 9a before 9)
+        mapping = [
+            (r"\bitem\s+1a\b", cls.RISK_FACTORS),
+            (r"\bitem\s+9a\b", cls.CONTROLS),
+            (r"\bitem\s+1\b", cls.BUSINESS),
+            (r"\bitem\s+2\b", cls.PROPERTIES),
+            (r"\bitem\s+3\b", cls.LEGAL_PROCEEDINGS),
+            (r"\bitem\s+7\b", cls.MDA),
+            (r"\bitem\s+8\b", cls.FINANCIAL_STATEMENTS),
+        ]
+        for pattern, section in mapping:
+            if re.search(pattern, text):
                 return section
         return cls.OTHER
 

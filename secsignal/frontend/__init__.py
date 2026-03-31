@@ -1,0 +1,1 @@
+"""SecSignal frontend package."""

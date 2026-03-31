@@ -27,10 +27,10 @@ FillingTinker ingests SEC EDGAR filings (10-K, 10-Q, 8-K), transforms them into 
 | Filing source | SEC EDGAR Full-Text Search API (EFTS — free, no API key) |
 | Raw storage | GCS (Google Cloud Storage) |
 | Data warehouse | Snowflake (RAW → staging → marts via dbt) |
-| Document parsing | Snowflake Cortex `AI_PARSE_DOCUMENT` (LAYOUT mode + image extraction) |
+| Document parsing | HTML `<img>` tag extraction + BeautifulSoup (EDGAR XHTML not supported by AI_PARSE_DOCUMENT) |
 | Chart analysis | Snowflake Cortex `AI_EXTRACT` (vision-language model for structured chart data) |
-| Text embeddings | Snowflake Cortex `AI_EMBED` — `snowflake-arctic-embed-l-v2.0-8k` (1024 dims) |
-| Image embeddings | Snowflake Cortex `AI_EMBED` — `voyage-multimodal-3` (cross-modal text↔image) |
+| Text embeddings | Snowflake Cortex `EMBED_TEXT_1024` — `snowflake-arctic-embed-l-v2.0-8k` (1024 dims) |
+| Image embeddings | Snowflake Cortex `EMBED_TEXT_1024` — `voyage-multimodal-3` (cross-modal text↔image, data URI) |
 | Vector search | Snowflake Cortex Search |
 | LLM generation | Snowflake Cortex LLM (managed, multimodal — Claude/LLaMA for chart analysis) |
 | Agent framework | LangGraph (supervisor + specialist subagents) |
@@ -87,9 +87,9 @@ dbt staging models          ← clean, type-cast, dedup
     ▼
 dbt marts                   ← fact_financials, dim_companies, etc.
     │
-    ├──► AI_PARSE_DOCUMENT  ← LAYOUT mode → structured text + base64 images
+    ├──► HTML <img> extraction   ← BeautifulSoup parses EDGAR XHTML → images
     │         │
-    │         ├──► Text chunks → AI_EMBED (arctic-embed-l-v2.0-8k, 1024d)
+    │         ├──► Text chunks → EMBED_TEXT_1024 (arctic-embed-l-v2.0-8k, 1024d)
     │         │         │
     │         │         ▼
     │         │    text_embeddings table (VECTOR(FLOAT,1024))
@@ -98,7 +98,7 @@ dbt marts                   ← fact_financials, dim_companies, etc.
     │                   │             + AI_COMPLETE (chart descriptions)
     │                   │
     │                   ▼
-    │              AI_EMBED (voyage-multimodal-3) → image_embeddings table
+    │              EMBED_TEXT_1024 (voyage-multimodal-3, data URI) → image_embeddings table
     │
     ├──► Cortex Search      ← search service over text + chart descriptions
     │
@@ -132,15 +132,15 @@ secsignal/
 │   └── gcs_uploader.py          # raw filing → GCS (HTML, PDF, XBRL)
 │
 ├── processing/
-│   ├── document_parser.py       # AI_PARSE_DOCUMENT (LAYOUT + image extraction)
-│   ├── image_extractor.py       # extract base64 images from parsed output
+│   ├── document_parser.py       # legacy (unused — EDGAR XHTML not supported by AI_PARSE_DOCUMENT)
+│   ├── image_extractor.py       # HTML <img> tag extraction + EDGAR image download
 │   ├── chart_analyzer.py        # AI_EXTRACT → structured chart data
 │   └── description_gen.py       # AI_COMPLETE (multimodal) → chart descriptions
 │
 ├── embeddings/
 │   ├── cortex_embed.py          # dual embedding orchestrator
-│   ├── text_embedder.py         # AI_EMBED with arctic-embed-l-v2.0-8k (1024d)
-│   └── image_embedder.py        # AI_EMBED with voyage-multimodal-3 (cross-modal)
+│   ├── text_embedder.py         # EMBED_TEXT_1024 with arctic-embed-l-v2.0-8k (1024d)
+│   └── image_embedder.py        # EMBED_TEXT_1024 with voyage-multimodal-3 (cross-modal, data URI)
 │
 ├── dbt/
 │   ├── models/
@@ -230,11 +230,11 @@ secsignal/
 | GCS uploader | Store raw filings in `gs://secsignal-raw/` with date-partitioned paths (HTML, PDF, XBRL) |
 | Snowflake setup | Database `SECSIGNAL`, schemas (RAW, STAGING, INTERMEDIATE, MARTS), warehouse, roles |
 | RAW tables | `raw_filings`, `raw_companies`, `raw_filing_sections` via COPY INTO from GCS stage |
-| Document parsing | `AI_PARSE_DOCUMENT` (LAYOUT mode, `extract_images: true`) → structured text + base64 images |
-| Image extraction | Extract chart/graph images from parsed output → `filing_images` table |
+| Document parsing | HTML `<img>` tag extraction via BeautifulSoup (EDGAR XHTML not supported by AI_PARSE_DOCUMENT) |
+| Image extraction | Download referenced images from EDGAR URLs → `filing_images` table (base64-encoded) |
 | Chart analysis | `AI_EXTRACT` → structured data from charts; `AI_COMPLETE` (multimodal) → chart descriptions |
-| Text embeddings | `AI_EMBED` with `snowflake-arctic-embed-l-v2.0-8k` → `text_embeddings` (VECTOR(FLOAT,1024)) |
-| Image embeddings | `AI_EMBED` with `voyage-multimodal-3` → `image_embeddings` (cross-modal vectors) |
+| Text embeddings | `EMBED_TEXT_1024` with `snowflake-arctic-embed-l-v2.0-8k` → `text_embeddings` (VECTOR(FLOAT,1024)) |
+| Image embeddings | `EMBED_TEXT_1024` with `voyage-multimodal-3` (data URI) → `image_embeddings` (cross-modal vectors) |
 | dbt staging models | `stg_filings`, `stg_companies`, `stg_sections`, `stg_filing_images` — clean + normalise |
 | dbt mart models | `fct_financials`, `fct_risk_factors`, `fct_chart_data`, `dim_filing_images` |
 | Cortex Search index | Create search service over text chunks + chart descriptions |

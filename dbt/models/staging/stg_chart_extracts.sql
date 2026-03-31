@@ -11,4 +11,4 @@ SELECT
     LOADED_AT
 FROM {{ source('raw', 'chart_extracts') }}
 WHERE EXTRACT_ID IS NOT NULL
-  AND CONFIDENCE_SCORE > 0
+  AND CONFIDENCE_SCORE >= 0

@@ -74,9 +74,19 @@ class TextEmbedder:
 
         cursor = self._conn.cursor()
         inserted = 0
+        skipped = 0
+        total = len(chunks)
         try:
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks):
                 chunk_id = _generate_chunk_id(chunk["filing_id"], chunk["section_key"], chunk["chunk_index"])
+                # Skip if already embedded (idempotent re-runs)
+                cursor.execute(
+                    "SELECT 1 FROM SECSIGNAL.RAW.TEXT_EMBEDDINGS WHERE CHUNK_ID = %s",
+                    (chunk_id,),
+                )
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO SECSIGNAL.RAW.TEXT_EMBEDDINGS
@@ -100,6 +110,8 @@ class TextEmbedder:
                     ),
                 )
                 inserted += 1
+                if (i + 1) % 10 == 0 or (i + 1) == total:
+                    logger.info("embed_progress", done=i + 1, total=total, inserted=inserted, skipped=skipped)
             return inserted
         finally:
             cursor.close()

@@ -212,8 +212,16 @@ class ImageExtractor:
             return 0
 
         cursor = self._conn.cursor()
+        inserted = 0
         try:
             for img in images:
+                # Skip if already stored (idempotent re-runs)
+                cursor.execute(
+                    "SELECT 1 FROM SECSIGNAL.RAW.FILING_IMAGES WHERE IMAGE_ID = %s",
+                    (img.image_id,),
+                )
+                if cursor.fetchone():
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO SECSIGNAL.RAW.FILING_IMAGES
@@ -233,7 +241,8 @@ class ImageExtractor:
                         _bbox_to_json(img.bounding_box),
                     ),
                 )
-            return len(images)
+                inserted += 1
+            return inserted
         finally:
             cursor.close()
 
