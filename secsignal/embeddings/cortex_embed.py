@@ -156,7 +156,19 @@ class CortexEmbedder:
         cursor = self._conn.cursor()
         try:
             for chunk in chunks:
-                corpus_id = f"corpus_txt_{uuid.uuid4().hex[:12]}"
+                # Deterministic ID for dedup on re-runs
+                import hashlib
+                content_hash = hashlib.sha256(
+                    f"{chunk['filing_id']}:{chunk.get('section_key', '')}:{chunk.get('chunk_index', 0)}".encode()
+                ).hexdigest()[:12]
+                corpus_id = f"corpus_txt_{content_hash}"
+                # Skip if already exists
+                cursor.execute(
+                    "SELECT 1 FROM SECSIGNAL.RAW.SEARCH_CORPUS WHERE CORPUS_ID = %s",
+                    (corpus_id,),
+                )
+                if cursor.fetchone():
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO SECSIGNAL.RAW.SEARCH_CORPUS
@@ -191,7 +203,14 @@ class CortexEmbedder:
                 desc = descriptions.get(img.image_id)
                 if not desc:
                     continue
-                corpus_id = f"corpus_img_{uuid.uuid4().hex[:12]}"
+                corpus_id = f"corpus_img_{img.image_id}"
+                # Skip if already exists
+                cursor.execute(
+                    "SELECT 1 FROM SECSIGNAL.RAW.SEARCH_CORPUS WHERE CORPUS_ID = %s",
+                    (corpus_id,),
+                )
+                if cursor.fetchone():
+                    continue
                 cursor.execute(
                     """
                     INSERT INTO SECSIGNAL.RAW.SEARCH_CORPUS
