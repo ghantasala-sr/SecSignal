@@ -17,13 +17,14 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS — allow Streamlit frontend and local dev
+# CORS — allow frontend direct access (SSE bypasses Next.js proxy)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Request tracing

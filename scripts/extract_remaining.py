@@ -46,7 +46,7 @@ def run():
     existing = {row[0] for row in cursor.fetchall()}
     print(f"Already have data for: {existing}", flush=True)
 
-    # Get filings for missing tickers
+    # Get all MD&A filings — per-row dedup handles already-processed ones
     cursor.execute("""
         SELECT f.FILING_ID, c.TICKER, f.FILING_TYPE, f.FILING_DATE,
                s.SECTION_KEY, s.SECTION_TEXT, s.WORD_COUNT
@@ -56,7 +56,6 @@ def run():
         WHERE ((s.SECTION_KEY = 'item_2' AND f.FILING_TYPE IN ('10-Q', '10-K'))
             OR (s.SECTION_KEY = 'item_7' AND f.FILING_TYPE = '10-K'))
           AND s.WORD_COUNT > 200
-          AND c.TICKER NOT IN (SELECT DISTINCT TICKER FROM SECSIGNAL.RAW.EXTRACTED_FINANCIALS)
         ORDER BY s.WORD_COUNT ASC
     """)
     cols = [d[0] for d in cursor.description]

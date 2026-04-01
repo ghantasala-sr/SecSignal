@@ -20,7 +20,7 @@ from secsignal.agents.state import FilingState
 
 logger = structlog.get_logger(__name__)
 
-LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "mistral-large2")
+LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "claude-sonnet-4-6")
 
 CLASSIFICATION_PROMPT = """You are a financial query classifier for SEC filings. Analyze the user query and output a JSON object with these fields:
 
@@ -33,6 +33,10 @@ CLASSIFICATION_PROMPT = """You are a financial query classifier for SEC filings.
   Known tickers: AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA
 - "time_range": time period mentioned (e.g. "last 4 quarters", "2024-2025") or "all" if none specified
 - "visual_intent": true if the user asks about charts, graphs, images, or visual data; false otherwise
+
+IMPORTANT: If there is prior conversation context, the user may use pronouns or references like "what about MSFT?", "compare that with Tesla", "now show me anomalies". Resolve these references using the conversation history below.
+
+{conversation_context}
 
 Output ONLY valid JSON, no markdown or explanation.
 
@@ -49,7 +53,19 @@ def classify_query(state: FilingState) -> FilingState:
     cursor = conn.cursor()
 
     try:
-        prompt = CLASSIFICATION_PROMPT.format(query=query)
+        # Format conversation context for the classifier
+        history = state.get("conversation_history", [])
+        if history:
+            context_parts = []
+            for turn in history[-4:]:  # last 2 exchanges
+                role = "User" if turn.get("role") == "user" else "Assistant"
+                content = turn.get("content", "")[:500]
+                context_parts.append(f"{role}: {content}")
+            conversation_context = "Prior conversation:\n" + "\n".join(context_parts)
+        else:
+            conversation_context = "No prior conversation."
+
+        prompt = CLASSIFICATION_PROMPT.format(query=query, conversation_context=conversation_context)
 
         cursor.execute(
             "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response",

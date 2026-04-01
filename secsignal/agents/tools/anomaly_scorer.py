@@ -1,7 +1,7 @@
 """Anomaly scorer — rolling z-score detection over risk factor changes.
 
 Computes z-scores over a rolling 8-quarter window on word count deltas
-from fct_risk_factors. Flags metrics where |z| > 2.0 as anomalies.
+from fct_risk_factors. Flags metrics where |z| > 1.0 as anomalies.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from secsignal.agents.connection import get_snowflake_connection
 
 logger = structlog.get_logger(__name__)
 
-Z_THRESHOLD = 2.0
+Z_THRESHOLD = 1.0
 ROLLING_WINDOW = 8  # quarters
 
 
@@ -25,7 +25,7 @@ def detect_anomalies(
     """Detect anomalies in risk factor changes using rolling z-scores.
 
     Computes z-score = (value - rolling_avg) / rolling_stddev over an
-    8-quarter window. Flags values where |z| > 2.0.
+    8-quarter window. Flags values where |z| > 1.0.
 
     Args:
         ticker: Filter by ticker. None scans all companies.

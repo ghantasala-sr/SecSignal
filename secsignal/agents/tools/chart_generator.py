@@ -79,6 +79,188 @@ def generate_chart_data(
         cursor.close()
 
 
+def generate_trend_charts(
+    ticker: str | None = None,
+) -> list[dict[str, Any]]:
+    """Generate time-series charts from risk factor word counts.
+
+    Queries fct_risk_factors for word count and delta over filing dates,
+    producing line-chart-ready data for Streamlit.
+
+    Args:
+        ticker: Filter by ticker. None for all.
+
+    Returns:
+        List of chart dicts with chart_type='line', data=[{label, value}].
+    """
+    conn = get_snowflake_connection()
+    cursor = conn.cursor()
+    try:
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if ticker:
+            conditions.append("TICKER = %s")
+            params.append(ticker.upper())
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        sql = f"""
+            SELECT TICKER, FILING_TYPE, FILING_DATE, WORD_COUNT,
+                   WORD_COUNT_DELTA
+            FROM SECSIGNAL.MARTS.FCT_RISK_FACTORS
+            {where}
+            ORDER BY TICKER, FILING_DATE
+        """
+        cursor.execute(sql, params)
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        if not rows:
+            logger.debug("generate_trend_charts_empty", ticker=ticker)
+            return []
+
+        charts = _build_trend_charts(rows, ticker)
+        logger.debug("generate_trend_charts", ticker=ticker, charts=len(charts))
+        return charts
+
+    except Exception:
+        logger.exception("generate_trend_charts_failed", ticker=ticker)
+        return []
+    finally:
+        cursor.close()
+
+
+def _build_trend_charts(
+    rows: list[dict[str, Any]], ticker: str | None
+) -> list[dict[str, Any]]:
+    """Build line chart structures from risk factor time-series rows."""
+    from collections import defaultdict
+
+    by_ticker: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_ticker[r.get("TICKER", "?")].append(r)
+
+    charts = []
+    for tk, tk_rows in by_ticker.items():
+        if len(tk_rows) < 2:
+            continue
+
+        # Word count over time
+        wc_data = []
+        for r in tk_rows:
+            date_str = str(r.get("FILING_DATE", ""))
+            ftype = r.get("FILING_TYPE", "")
+            wc_data.append({
+                "label": f"{date_str} ({ftype})",
+                "value": float(r.get("WORD_COUNT", 0)),
+            })
+
+        charts.append({
+            "chart_type": "line",
+            "title": f"{tk} — Risk Factor Word Count Over Time",
+            "category": "risk_trend",
+            "unit": "words",
+            "ticker": tk,
+            "data": wc_data,
+        })
+
+        # Word count delta over time
+        delta_data = []
+        for r in tk_rows:
+            date_str = str(r.get("FILING_DATE", ""))
+            ftype = r.get("FILING_TYPE", "")
+            delta_data.append({
+                "label": f"{date_str} ({ftype})",
+                "value": float(r.get("WORD_COUNT_DELTA", 0)),
+            })
+
+        charts.append({
+            "chart_type": "line",
+            "title": f"{tk} — Risk Factor Change (Delta) Over Time",
+            "category": "risk_delta_trend",
+            "unit": "words",
+            "ticker": tk,
+            "data": delta_data,
+        })
+
+    return charts
+
+
+def generate_comparison_chart(
+    tickers: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Generate grouped bar chart comparing risk factor word counts across tickers.
+
+    Args:
+        tickers: List of tickers to compare. None for all.
+
+    Returns:
+        List with one chart dict containing per-ticker data points.
+    """
+    conn = get_snowflake_connection()
+    cursor = conn.cursor()
+    try:
+        if tickers:
+            placeholders = ", ".join(["%s"] * len(tickers))
+            where = f"WHERE TICKER IN ({placeholders})"
+            params = [t.upper() for t in tickers]
+        else:
+            where = ""
+            params = []
+
+        sql = f"""
+            SELECT TICKER, FILING_TYPE, FILING_DATE, WORD_COUNT,
+                   WORD_COUNT_DELTA
+            FROM SECSIGNAL.MARTS.FCT_RISK_FACTORS
+            {where}
+            ORDER BY TICKER, FILING_DATE DESC
+        """
+        cursor.execute(sql, params)
+        columns = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        if not rows:
+            logger.debug("generate_comparison_chart_empty")
+            return []
+
+        # Take latest filing per ticker
+        seen: set[str] = set()
+        data_points = []
+        for r in rows:
+            tk = r.get("TICKER", "?")
+            if tk in seen:
+                continue
+            seen.add(tk)
+            data_points.append({
+                "label": f"{tk} ({r.get('FILING_TYPE', '')} {str(r.get('FILING_DATE', ''))[:10]})",
+                "value": float(r.get("WORD_COUNT", 0)),
+                "ticker": tk,
+            })
+
+        if len(data_points) < 2:
+            return []
+
+        ticker_label = ", ".join(sorted(seen))
+        charts = [{
+            "chart_type": "bar",
+            "title": f"Risk Factor Length Comparison — {ticker_label}",
+            "category": "risk_comparison",
+            "unit": "words",
+            "ticker": "COMPARISON",
+            "data": data_points,
+        }]
+
+        logger.debug("generate_comparison_chart", tickers=list(seen), charts=len(charts))
+        return charts
+
+    except Exception:
+        logger.exception("generate_comparison_chart_failed")
+        return []
+    finally:
+        cursor.close()
+
+
 def _group_into_charts(
     rows: list[dict[str, Any]], ticker: str | None
 ) -> list[dict[str, Any]]:

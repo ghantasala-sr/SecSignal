@@ -66,6 +66,13 @@ class FilingState(TypedDict):
     anomaly_scores: Annotated[list[AnomalyScore], operator.add]
     generated_charts: Annotated[list[dict[str, Any]], operator.add]  # chart data for Streamlit rendering
 
+    # Web search context (from Cortex Agent web search)
+    web_context: str
+    web_sources: Annotated[list[dict[str, str]], operator.add]  # clickable web source citations
+
+    # Conversation history (for follow-up questions)
+    conversation_history: list[dict[str, str]]
+
     # Output
     final_answer: str
     sources: list[dict[str, str]]  # citation references

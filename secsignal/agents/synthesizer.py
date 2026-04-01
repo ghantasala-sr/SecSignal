@@ -17,9 +17,11 @@ from secsignal.agents.state import FilingState
 
 logger = structlog.get_logger(__name__)
 
-LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "mistral-large2")
+LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "claude-sonnet-4-6")
 
-SYNTHESIS_PROMPT = """You are a senior financial analyst synthesizing SEC filing intelligence. Based on the retrieved data below, produce a comprehensive answer to the user's query.
+SYNTHESIS_PROMPT = """You are an elite sell-side equity research analyst producing institutional-grade SEC filing intelligence. Your readers are portfolio managers who need actionable insight, not summaries.
+
+{conversation_history}
 
 **User Query:** {query}
 **Query Type:** {query_type}
@@ -34,14 +36,39 @@ SYNTHESIS_PROMPT = """You are a senior financial analyst synthesizing SEC filing
 
 {chart_context}
 
-**Instructions:**
-1. Provide a clear, well-structured answer citing specific data points.
-2. When referencing filing data, mention the company ticker, filing date, and filing type.
-3. If anomalies were detected, explain their significance (z-score meaning, direction of change).
-4. For comparisons, use a structured format with clear company-by-company breakdown.
-5. If chart data is available, reference the chart descriptions in your analysis.
-6. Keep the response concise but thorough — 2-4 paragraphs for typical queries.
-7. End with a brief "Sources" section listing the filings referenced.
+{web_context}
+
+**Analysis Standards — follow these strictly:**
+
+1. **Lead with the signal, not the data.** Open with the most material finding and its business implication. Never start with "Based on the data..." or restate the query.
+
+2. **Quantify everything.** Every claim must cite specific numbers — dollar amounts, percentages, word counts, z-scores, filing dates. Vague language like "significant increase" is unacceptable; say "$2.3B increase in R&D (+18% YoY)" instead.
+
+3. **Explain the business impact.** For every data point, answer: "So what does this mean for revenue, margins, or risk exposure?" Connect filing language to real financial consequences.
+   - BAD: "Apple's tariff-related risk language is worth monitoring."
+   - GOOD: "Tariff risk is likely to transition from narrative mention to formal risk factor if trade tensions escalate, given Apple's heavy reliance on China-based manufacturing (~90% of iPhone assembly), which directly impacts gross margins."
+
+4. **Be specific about causality.** Don't just report what changed — explain WHY it changed and what it signals about the company's strategic direction.
+
+5. **For anomalies:** Explain what a z-score means in plain terms (e.g., "a z-score of +3.2 means this metric is 3.2 standard deviations above the company's historical norm — a statistically rare event"). Then state what could cause it and what it implies for future filings or earnings.
+
+6. **For comparisons:** Don't just list differences — rank companies by risk exposure or metric strength and explain who is better/worse positioned and why.
+
+7. **For trends:** Identify inflection points — where did the trajectory change, and what external or strategic event likely caused it?
+
+8. **End with a sharp forward-looking verdict.** State the probable trajectory: what is likely to happen next based on the evidence? Give a clear directional view, not hedged platitudes.
+
+9. **Structure:** Use markdown with clear headers (##), bold key figures, and bullet points for data-dense sections. Keep it 3-5 paragraphs — dense but readable.
+
+10. **Source references:** When citing filing data, always include (TICKER, filing type, filing date) inline.
+
+11. **ALWAYS include a summary data table.** For every response that involves numeric data (prices, financials, risk metrics, comparisons), you MUST include at least one GitHub-Flavored Markdown pipe table. Use `| Column | Column |` with `|---|---|` separator rows. Align numeric columns right. Example:
+    | Ticker | Revenue ($M) | YoY Growth |
+    |--------|-------------:|-----------:|
+    | AAPL   |       94,836 |      +4.2% |
+    This is mandatory — never present numeric comparisons as plain prose when a table would be clearer.
+
+12. **Chart-friendly data.** When presenting current market data (stock prices, analyst targets, percentage changes), always organize them in a table with consistent columns so the data can be visualized. Include exact numeric values (not ranges) wherever possible.
 
 Answer:"""
 
@@ -58,6 +85,8 @@ def synthesizer(state: FilingState) -> dict:
     sql_results = state.get("sql_results", [])
     anomaly_scores = state.get("anomaly_scores", [])
     retrieved_charts = state.get("retrieved_charts", [])
+    web_context_raw = state.get("web_context", "")
+    history_raw = state.get("conversation_history", [])
 
     # Format text context
     text_context = _format_text_chunks(retrieved_chunks)
@@ -71,6 +100,12 @@ def synthesizer(state: FilingState) -> dict:
     # Format chart context (descriptions only, not base64 data)
     chart_context = _format_charts(retrieved_charts)
 
+    # Format web context
+    web_context = _format_web_context(web_context_raw)
+
+    # Format conversation history
+    conversation_history = _format_conversation_history(history_raw)
+
     prompt = SYNTHESIS_PROMPT.format(
         query=query,
         query_type=query_type,
@@ -78,6 +113,8 @@ def synthesizer(state: FilingState) -> dict:
         sql_context=sql_context or "No structured data retrieved.",
         anomaly_context=anomaly_context,
         chart_context=chart_context,
+        web_context=web_context,
+        conversation_history=conversation_history,
     )
 
     conn = get_snowflake_connection()
@@ -189,6 +226,35 @@ def _format_charts(charts: list[dict[str, Any]]) -> str:
             f"- [{c.get('ticker', '?')} | {c.get('chart_type', '?')} | "
             f"{c.get('filing_date', '?')}] {desc}"
         )
+    return "\n".join(parts)
+
+
+def _format_web_context(web_context: str) -> str:
+    """Format web search results for the synthesis prompt."""
+    if not web_context:
+        return ""
+    return (
+        "**Real-Time Market Context (from web search — use to add current perspective, "
+        "but always prioritize SEC filing data as the authoritative source):**\n"
+        f"{web_context[:3000]}"
+    )
+
+
+def _format_conversation_history(history: list[dict[str, str]]) -> str:
+    """Format recent conversation turns for context in follow-up queries."""
+    if not history:
+        return ""
+    # Take last 3 exchanges (6 turns max) to keep prompt manageable
+    recent = history[-6:]
+    parts = ["**Prior Conversation (use for context — the current query may be a follow-up):**"]
+    for turn in recent:
+        role = turn.get("role", "user")
+        content = turn.get("content", "")
+        # Truncate long assistant responses to keep prompt size reasonable
+        if role == "assistant":
+            content = content[:1500] + ("..." if len(content) > 1500 else "")
+        prefix = "User" if role == "user" else "Assistant"
+        parts.append(f"**{prefix}:** {content}")
     return "\n".join(parts)
 
 

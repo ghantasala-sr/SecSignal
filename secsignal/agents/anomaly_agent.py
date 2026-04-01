@@ -13,6 +13,7 @@ from secsignal.agents.tools.anomaly_scorer import detect_anomalies
 from secsignal.agents.tools.sql_tool import query_risk_factors
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
+from secsignal.agents.tools.chart_generator import generate_trend_charts
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +34,7 @@ def anomaly_agent(state: FilingState) -> dict:
     retrieved_chunks = []
     retrieved_charts = []
     anomaly_scores = []
+    generated_charts = []
 
     # 1. Run anomaly detection
     if tickers:
@@ -130,6 +132,15 @@ def anomaly_agent(state: FilingState) -> dict:
         except Exception:
             logger.exception("anomaly_visual_failed")
 
+    # 5. Generate trend charts for flagged/requested tickers
+    chart_tickers = flagged_tickers or tickers_to_query[:3]
+    for ticker in chart_tickers:
+        try:
+            trend_charts = generate_trend_charts(ticker=ticker)
+            generated_charts.extend(trend_charts)
+        except Exception:
+            logger.exception("anomaly_trend_chart_failed", ticker=ticker)
+
     logger.info(
         "anomaly_agent_done",
         tickers=flagged_tickers,
@@ -143,5 +154,5 @@ def anomaly_agent(state: FilingState) -> dict:
         "retrieved_chunks": retrieved_chunks,
         "retrieved_charts": retrieved_charts,
         "anomaly_scores": anomaly_scores,
-        "generated_charts": [],
+        "generated_charts": generated_charts,
     }

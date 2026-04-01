@@ -17,7 +17,7 @@ from secsignal.agents.tools.sql_tool import (
 )
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
-from secsignal.agents.tools.chart_generator import generate_chart_data
+from secsignal.agents.tools.chart_generator import generate_chart_data, generate_comparison_chart, generate_trend_charts
 
 logger = structlog.get_logger(__name__)
 
@@ -135,6 +135,21 @@ def comparison_agent(state: FilingState) -> dict:
             generated_charts.extend(chart_data)
         except Exception:
             logger.exception("comparison_chart_gen_failed", ticker=ticker)
+
+    # 5b. Generate comparison chart across all tickers
+    try:
+        comp_charts = generate_comparison_chart(tickers=tickers)
+        generated_charts.extend(comp_charts)
+    except Exception:
+        logger.exception("comparison_chart_comparison_failed")
+
+    # 5c. Generate trend line charts for tickers with multiple filings
+    for ticker in tickers[:3]:
+        try:
+            trend_charts = generate_trend_charts(ticker=ticker)
+            generated_charts.extend(trend_charts)
+        except Exception:
+            logger.exception("comparison_trend_chart_failed", ticker=ticker)
 
     logger.info(
         "comparison_agent_done",

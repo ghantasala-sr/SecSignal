@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from secsignal.agents.graph import run_query
+from secsignal.agents.graph import run_query, run_query_stream
+from secsignal.agents.connection import get_snowflake_connection
 
 logger = structlog.get_logger(__name__)
 
+LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "claude-sonnet-4-6")
+
 router = APIRouter(prefix="/api", tags=["query"])
+
+
+class ConversationTurn(BaseModel):
+    """A single turn in the conversation history."""
+
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., max_length=4000)
 
 
 class QueryRequest(BaseModel):
@@ -20,6 +34,7 @@ class QueryRequest(BaseModel):
 
     query: str = Field(..., min_length=3, max_length=2000, description="Natural language query about SEC filings")
     tickers: list[str] | None = Field(default=None, description="Optional ticker filter (e.g. ['AAPL', 'MSFT'])")
+    context: list[ConversationTurn] | None = Field(default=None, description="Recent conversation history for follow-up questions")
 
 
 class SourceCitation(BaseModel):
@@ -64,6 +79,8 @@ class QueryResponse(BaseModel):
     sources: list[dict[str, Any]]
     charts: list[dict[str, Any]]
     anomalies: list[dict[str, Any]]
+    generated_charts: list[dict[str, Any]]
+    web_sources: list[dict[str, Any]]
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -75,10 +92,13 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
     """
     logger.info("query_received", query=request.query[:60], tickers=request.tickers)
 
+    history = [{"role": t.role, "content": t.content} for t in (request.context or [])]
+
     try:
         result = run_query(
             query=request.query,
             tickers=request.tickers,
+            conversation_history=history or None,
         )
     except Exception:
         logger.exception("query_failed", query=request.query[:60])
@@ -95,6 +115,67 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
             for c in result.get("retrieved_charts", [])
         ],
         anomalies=result.get("anomaly_scores", []),
+        generated_charts=result.get("generated_charts", []),
+        web_sources=result.get("web_sources", []),
+    )
+
+
+@router.post("/query/stream")
+async def query_stream_endpoint(request: QueryRequest) -> StreamingResponse:
+    """Stream query execution with real-time agent trajectory events.
+
+    Returns a Server-Sent Events stream. Each event is a JSON object:
+      - {"event": "step", "step": 0, "node": "classify_query", "label": "...", "detail": {...}}
+      - {"event": "result", "data": { ...full QueryResponse payload... }}
+
+    Uses an async generator that runs the sync graph stream in a thread
+    pool, yielding SSE events one at a time without buffering.
+    """
+    logger.info("query_stream_received", query=request.query[:60], tickers=request.tickers)
+
+    history = [{"role": t.role, "content": t.content} for t in (request.context or [])]
+
+    async def event_generator():
+        """Async generator — runs sync graph in thread, yields SSE events."""
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        def _run_sync():
+            """Execute the sync generator and push events into the async queue."""
+            try:
+                for sse_event in run_query_stream(
+                    query=request.query,
+                    tickers=request.tickers,
+                    conversation_history=history or None,
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, sse_event)
+            except Exception:
+                logger.exception("query_stream_failed", query=request.query[:60])
+                error_event = {"event": "error", "message": "Agent system error. Please try again."}
+                loop.call_soon_threadsafe(
+                    queue.put_nowait, f"data: {json.dumps(error_event)}\n\n"
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        # Start the sync generator in a background thread
+        asyncio.ensure_future(loop.run_in_executor(None, _run_sync))
+
+        # Yield events as they arrive
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -146,3 +227,43 @@ async def get_chart_image(image_id: str) -> dict:
     except Exception:
         logger.exception("get_chart_failed", image_id=image_id)
         raise HTTPException(status_code=500, detail="Failed to retrieve chart image")
+
+
+class SummarizeRequest(BaseModel):
+    """Request body for the /summarize endpoint."""
+
+    text: str = Field(..., min_length=10, max_length=20000)
+
+
+class SummarizeResponse(BaseModel):
+    """Response body from the /summarize endpoint."""
+
+    summary: str
+
+
+SUMMARIZE_PROMPT = """Condense the following financial analysis into a brief summary (max 3-4 sentences). Preserve the key tickers, metrics, findings, and any numbers. Drop formatting, section headers, and hedging language. Output ONLY the summary, no preamble.
+
+Text:
+{text}"""
+
+
+@router.post("/summarize", response_model=SummarizeResponse)
+async def summarize_endpoint(request: SummarizeRequest) -> SummarizeResponse:
+    """Summarize a long analysis answer for use as conversation context."""
+    conn = get_snowflake_connection()
+    cursor = conn.cursor()
+    try:
+        prompt = SUMMARIZE_PROMPT.format(text=request.text[:12000])
+        cursor.execute(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response",
+            (LLM_MODEL, prompt),
+        )
+        row = cursor.fetchone()
+        summary = row[0] if row else request.text[:500]
+        return SummarizeResponse(summary=summary.strip())
+    except Exception:
+        logger.exception("summarize_failed")
+        # Fallback: return truncated text rather than failing the follow-up
+        return SummarizeResponse(summary=request.text[:500])
+    finally:
+        cursor.close()

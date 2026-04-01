@@ -12,7 +12,7 @@ from secsignal.agents.state import FilingState
 from secsignal.agents.tools.sql_tool import query_financials, query_risk_factors, query_extracted_financials
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
-from secsignal.agents.tools.chart_generator import generate_chart_data
+from secsignal.agents.tools.chart_generator import generate_chart_data, generate_trend_charts
 
 logger = structlog.get_logger(__name__)
 
@@ -126,6 +126,13 @@ def trend_agent(state: FilingState) -> dict:
         generated_charts.extend(chart_data)
     except Exception:
         logger.exception("trend_chart_generation_failed", ticker=ticker)
+
+    # 5b. Generate trend line charts from risk factor time-series
+    try:
+        trend_charts = generate_trend_charts(ticker=ticker)
+        generated_charts.extend(trend_charts)
+    except Exception:
+        logger.exception("trend_line_chart_failed", ticker=ticker)
 
     logger.info(
         "trend_agent_done",
