@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from secsignal.api.middleware.tracing import TracingMiddleware
 from secsignal.api.routers.query import router as query_router
@@ -17,10 +23,26 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS — allow frontend direct access (SSE bypasses Next.js proxy)
+# Rate limiting — 10 requests/minute per IP on query endpoints
+limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please wait a moment before trying again."},
+    )
+
+# CORS — restrict origins in production via ALLOWED_ORIGINS env var.
+# Defaults to localhost for local dev. Set to your Vercel URL in production.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -8,18 +8,23 @@ import os
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from secsignal.agents.graph import run_query, run_query_stream
 from secsignal.agents.connection import get_snowflake_connection
+from secsignal.agents.guardrails import check_input_guardrails
 
 logger = structlog.get_logger(__name__)
 
 LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "claude-sonnet-4-6")
 
 router = APIRouter(prefix="/api", tags=["query"])
+
+limiter = Limiter(key_func=get_remote_address)
 
 
 class ConversationTurn(BaseModel):
@@ -84,24 +89,31 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_endpoint(request: QueryRequest) -> QueryResponse:
+@limiter.limit("10/minute")
+async def query_endpoint(request: Request, body: QueryRequest) -> QueryResponse:
     """Run a natural language query through the SecSignal agent system.
 
     The query is classified, routed to a specialist agent (trend, comparison,
     or anomaly), and synthesized into a cited answer.
     """
-    logger.info("query_received", query=request.query[:60], tickers=request.tickers)
+    logger.info("query_received", query=body.query[:60], tickers=body.tickers)
 
-    history = [{"role": t.role, "content": t.content} for t in (request.context or [])]
+    # --- Input guardrails: reject off-topic / injection / gibberish ---
+    guardrail = check_input_guardrails(body.query)
+    if not guardrail["allowed"]:
+        raise HTTPException(status_code=422, detail=guardrail.get("reason", "Query not allowed."))
+    # --- End input guardrails ---
+
+    history = [{"role": t.role, "content": t.content} for t in (body.context or [])]
 
     try:
         result = run_query(
-            query=request.query,
-            tickers=request.tickers,
+            query=body.query,
+            tickers=body.tickers,
             conversation_history=history or None,
         )
     except Exception:
-        logger.exception("query_failed", query=request.query[:60])
+        logger.exception("query_failed", query=body.query[:60])
         raise HTTPException(status_code=500, detail="Agent system error. Please try again.")
 
     return QueryResponse(
@@ -121,7 +133,8 @@ async def query_endpoint(request: QueryRequest) -> QueryResponse:
 
 
 @router.post("/query/stream")
-async def query_stream_endpoint(request: QueryRequest) -> StreamingResponse:
+@limiter.limit("10/minute")
+async def query_stream_endpoint(request: Request, body: QueryRequest) -> StreamingResponse:
     """Stream query execution with real-time agent trajectory events.
 
     Returns a Server-Sent Events stream. Each event is a JSON object:
@@ -131,9 +144,26 @@ async def query_stream_endpoint(request: QueryRequest) -> StreamingResponse:
     Uses an async generator that runs the sync graph stream in a thread
     pool, yielding SSE events one at a time without buffering.
     """
-    logger.info("query_stream_received", query=request.query[:60], tickers=request.tickers)
+    logger.info("query_stream_received", query=body.query[:60], tickers=body.tickers)
 
-    history = [{"role": t.role, "content": t.content} for t in (request.context or [])]
+    # --- Input guardrails: reject off-topic / injection / gibberish ---
+    guardrail = check_input_guardrails(body.query)
+    if not guardrail["allowed"]:
+        reason = guardrail.get("reason", "Query not allowed.")
+        logger.info("guardrail_stream_rejected", query=body.query[:60], reason=reason)
+
+        async def rejection_generator():
+            error_event = {"event": "guardrail_rejected", "message": reason}
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+        return StreamingResponse(
+            rejection_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+    # --- End input guardrails ---
+
+    history = [{"role": t.role, "content": t.content} for t in (body.context or [])]
 
     async def event_generator():
         """Async generator — runs sync graph in thread, yields SSE events."""
@@ -144,13 +174,13 @@ async def query_stream_endpoint(request: QueryRequest) -> StreamingResponse:
             """Execute the sync generator and push events into the async queue."""
             try:
                 for sse_event in run_query_stream(
-                    query=request.query,
-                    tickers=request.tickers,
+                    query=body.query,
+                    tickers=body.tickers,
                     conversation_history=history or None,
                 ):
                     loop.call_soon_threadsafe(queue.put_nowait, sse_event)
             except Exception:
-                logger.exception("query_stream_failed", query=request.query[:60])
+                logger.exception("query_stream_failed", query=body.query[:60])
                 error_event = {"event": "error", "message": "Agent system error. Please try again."}
                 loop.call_soon_threadsafe(
                     queue.put_nowait, f"data: {json.dumps(error_event)}\n\n"

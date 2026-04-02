@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { QueryRequest, QueryResponse } from "./api";
 
 const STREAM_BASE =
@@ -8,6 +8,12 @@ const STREAM_BASE =
 
 /** Threshold above which assistant answers get summarized instead of truncated. */
 const SUMMARIZE_THRESHOLD = 1500;
+
+/** If no SSE event arrives for this long, treat the stream as timed out. */
+const STREAM_TIMEOUT_MS = 90_000;
+
+/** localStorage key for persisted thread. */
+const STORAGE_KEY = "secsignal-thread";
 
 /** Call /api/summarize to condense a long answer. Falls back to truncation. */
 async function summarizeText(text: string): Promise<string> {
@@ -35,6 +41,8 @@ export interface TrajectoryStep {
   label: string;
   detail: Record<string, unknown>;
   status: "complete" | "active";
+  duration_ms?: number;
+  started_at?: number;
 }
 
 export interface ThreadMessage {
@@ -53,6 +61,40 @@ export interface ThreadState {
 }
 
 // ---------------------------------------------------------------------------
+// localStorage helpers
+// ---------------------------------------------------------------------------
+
+function loadThread(): ThreadMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ThreadMessage[];
+    // Strip any messages that were mid-loading when the page closed
+    return parsed
+      .filter((m) => !m.loading)
+      .map((m) => ({ ...m, loading: false }));
+  } catch {
+    return [];
+  }
+}
+
+function saveThread(messages: ThreadMessage[]) {
+  if (typeof window === "undefined") return;
+  try {
+    // Only persist completed messages
+    const completed = messages.filter((m) => !m.loading);
+    if (completed.length === 0) {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(completed));
+    }
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
@@ -60,6 +102,53 @@ export function useQueryStream() {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydrated = useRef(false);
+
+  // Hydrate from localStorage on mount (only once)
+  useEffect(() => {
+    if (!hydrated.current) {
+      hydrated.current = true;
+      const saved = loadThread();
+      if (saved.length > 0) {
+        setMessages(saved);
+      }
+    }
+  }, []);
+
+  // Persist to localStorage whenever messages change (skip loading messages)
+  useEffect(() => {
+    if (hydrated.current) {
+      saveThread(messages);
+    }
+  }, [messages]);
+
+  /** Reset the inactivity timeout. */
+  function resetTimeout(msgId: string) {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      abortRef.current?.abort();
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId && m.loading
+            ? {
+                ...m,
+                error: "Analysis timed out — no response received for 90 seconds. Please try again.",
+                loading: false,
+              }
+            : m,
+        ),
+      );
+      setLoading(false);
+    }, STREAM_TIMEOUT_MS);
+  }
+
+  function clearTimeoutRef() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }
 
   /** Build context payload from prior messages (last 3 exchanges).
    *  Long assistant answers are summarized via /api/summarize. */
@@ -87,6 +176,7 @@ export function useQueryStream() {
     async (req: QueryRequest) => {
       // Abort any in-flight stream
       abortRef.current?.abort();
+      clearTimeoutRef();
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -105,8 +195,10 @@ export function useQueryStream() {
       setLoading(true);
 
       // Build context from existing messages before we added the new one.
-      // Summarizes long assistant answers via /api/summarize.
       const context = await buildContext(messages);
+
+      // Start inactivity timeout
+      resetTimeout(msgId);
 
       try {
         const body: Record<string, unknown> = { ...req };
@@ -136,6 +228,9 @@ export function useQueryStream() {
           const { done, value } = await reader.read();
           if (done) break;
 
+          // Reset timeout on every chunk received
+          resetTimeout(msgId);
+
           buffer += decoder.decode(value, { stream: true });
 
           const lines = buffer.split("\n\n");
@@ -160,6 +255,8 @@ export function useQueryStream() {
                 label: event.label as string,
                 detail: (event.detail as Record<string, unknown>) ?? {},
                 status: "complete",
+                duration_ms: (event.duration_ms as number) ?? undefined,
+                started_at: (event.started_at as number) ?? undefined,
               };
               setMessages((prev) =>
                 prev.map((m) =>
@@ -194,6 +291,20 @@ export function useQueryStream() {
                     : m,
                 ),
               );
+            } else if (event.event === "guardrail_rejected") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === msgId
+                    ? {
+                        ...m,
+                        error:
+                          (event.message as string) ??
+                          "This query is outside the scope of SEC filing analysis. Please ask about financial data, company filings, or market trends.",
+                        loading: false,
+                      }
+                    : m,
+                ),
+              );
             } else if (event.event === "error") {
               setMessages((prev) =>
                 prev.map((m) =>
@@ -220,6 +331,7 @@ export function useQueryStream() {
           ),
         );
       } finally {
+        clearTimeoutRef();
         setLoading(false);
         // Mark message as done loading in case the stream ended without result event
         setMessages((prev) =>
@@ -234,17 +346,38 @@ export function useQueryStream() {
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
+    clearTimeoutRef();
     setLoading(false);
     setMessages((prev) =>
-      prev.map((m) => (m.loading ? { ...m, loading: false } : m)),
+      prev.map((m) =>
+        m.loading
+          ? { ...m, loading: false, error: "Analysis cancelled." }
+          : m,
+      ),
     );
   }, []);
 
+  /** Retry the last failed message by resubmitting its query. */
+  const retry = useCallback(
+    (messageId: string) => {
+      const target = messages.find((m) => m.id === messageId);
+      if (!target) return;
+      // Remove the failed message and resubmit
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      submit({ query: target.query });
+    },
+    [messages, submit],
+  );
+
   const clearThread = useCallback(() => {
     abortRef.current?.abort();
+    clearTimeoutRef();
     setMessages([]);
     setLoading(false);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }, []);
 
-  return { messages, loading, submit, cancel, clearThread } as const;
+  return { messages, loading, submit, cancel, retry, clearThread } as const;
 }

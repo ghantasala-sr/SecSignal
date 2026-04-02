@@ -38,6 +38,8 @@ SYNTHESIS_PROMPT = """You are an elite sell-side equity research analyst produci
 
 {web_context}
 
+{unknown_tickers_context}
+
 **Analysis Standards — follow these strictly:**
 
 1. **Lead with the signal, not the data.** Open with the most material finding and its business implication. Never start with "Based on the data..." or restate the query.
@@ -87,6 +89,7 @@ def synthesizer(state: FilingState) -> dict:
     retrieved_charts = state.get("retrieved_charts", [])
     web_context_raw = state.get("web_context", "")
     history_raw = state.get("conversation_history", [])
+    unknown_tickers = state.get("unknown_tickers", [])
 
     # Format text context
     text_context = _format_text_chunks(retrieved_chunks)
@@ -103,6 +106,9 @@ def synthesizer(state: FilingState) -> dict:
     # Format web context
     web_context = _format_web_context(web_context_raw)
 
+    # Format unknown tickers notice
+    unknown_tickers_context = _format_unknown_tickers(unknown_tickers)
+
     # Format conversation history
     conversation_history = _format_conversation_history(history_raw)
 
@@ -114,6 +120,7 @@ def synthesizer(state: FilingState) -> dict:
         anomaly_context=anomaly_context,
         chart_context=chart_context,
         web_context=web_context,
+        unknown_tickers_context=unknown_tickers_context,
         conversation_history=conversation_history,
     )
 
@@ -286,3 +293,19 @@ def _build_sources(
                 "content_type": "structured_data",
             })
     return sources
+
+
+def _format_unknown_tickers(unknown_tickers: list[str]) -> str:
+    """Format notice about tickers not found in our filing database."""
+    if not unknown_tickers:
+        return ""
+    ticker_list = ", ".join(unknown_tickers)
+    return (
+        f"**IMPORTANT — No Filing Data Available:** The following tickers are NOT in our SEC filing database: "
+        f"**{ticker_list}**. We only have filings for AAPL, AMZN, GOOGL, MSFT, NVDA, and TSLA. "
+        f"You MUST clearly tell the user that we do not have SEC filing data for {ticker_list}. "
+        f"If web search results are available above, use them to provide what information you can, "
+        f"but explicitly state that it comes from web sources, not SEC filings. "
+        f"If no web results are available either, tell the user we have no data for these tickers "
+        f"and suggest they ask about one of the supported tickers instead."
+    )

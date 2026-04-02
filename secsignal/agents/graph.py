@@ -1,24 +1,28 @@
-"""LangGraph graph definition — wires supervisor → specialists → synthesizer.
+"""LangGraph graph definition — planner → [dynamic fan-out] → synthesizer.
 
 The SecSignal agent graph:
-    START → classify_query → route → [trend_agent | comparison_agent | anomaly_agent] → synthesizer → END
+    START → classify_query → route_plan → [Send to selected agents] → synthesizer → END
 
-Uses LangGraph StateGraph with conditional routing based on query classification.
+Uses LangGraph Send for conditional fan-out: the planner decides which agents
+to invoke (e.g. just trend_agent, or trend_agent + web_search_agent), and only
+those run. This eliminates the old bottleneck where web_search_agent always ran.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Generator
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
 from secsignal.agents.state import FilingState
-from secsignal.agents.supervisor import classify_query, route_query
+from secsignal.agents.supervisor import classify_query, route_plan
 from secsignal.agents.trend_agent import trend_agent
 from secsignal.agents.comparison_agent import comparison_agent
 from secsignal.agents.anomaly_agent import anomaly_agent
+from secsignal.agents.general_agent import general_agent
 from secsignal.agents.synthesizer import synthesizer
 from secsignal.agents.web_search_agent import web_search_agent
 
@@ -27,7 +31,11 @@ def build_graph() -> StateGraph:
     """Build and compile the SecSignal LangGraph agent system.
 
     Graph topology:
-        classify_query → conditional_route → specialist → web_search_agent → synthesizer → END
+        classify_query → route_plan (Send fan-out) → [selected agents] → synthesizer → END
+
+    The planner's execution_plan determines which agents run. All selected
+    agents run in parallel (via Send), their results merge via operator.add
+    annotations, then synthesizer produces the final answer.
 
     Returns:
         Compiled LangGraph runnable.
@@ -39,29 +47,32 @@ def build_graph() -> StateGraph:
     graph.add_node("trend_agent", trend_agent)
     graph.add_node("comparison_agent", comparison_agent)
     graph.add_node("anomaly_agent", anomaly_agent)
+    graph.add_node("general_agent", general_agent)
     graph.add_node("web_search_agent", web_search_agent)
     graph.add_node("synthesizer", synthesizer)
 
     # Entry point
     graph.set_entry_point("classify_query")
 
-    # Conditional routing from supervisor to specialist
+    # Conditional fan-out from planner using Send
+    # route_plan returns list[Send] based on execution_plan
     graph.add_conditional_edges(
         "classify_query",
-        route_query,
-        {
-            "trend_agent": "trend_agent",
-            "comparison_agent": "comparison_agent",
-            "anomaly_agent": "anomaly_agent",
-        },
+        route_plan,
+        [
+            "trend_agent",
+            "comparison_agent",
+            "anomaly_agent",
+            "general_agent",
+            "web_search_agent",
+        ],
     )
 
-    # All specialists flow into web_search_agent for real-time context
-    graph.add_edge("trend_agent", "web_search_agent")
-    graph.add_edge("comparison_agent", "web_search_agent")
-    graph.add_edge("anomaly_agent", "web_search_agent")
-
-    # Web search feeds into synthesizer
+    # All agent nodes converge to synthesizer
+    graph.add_edge("trend_agent", "synthesizer")
+    graph.add_edge("comparison_agent", "synthesizer")
+    graph.add_edge("anomaly_agent", "synthesizer")
+    graph.add_edge("general_agent", "synthesizer")
     graph.add_edge("web_search_agent", "synthesizer")
 
     # Synthesizer is the terminal node
@@ -91,6 +102,8 @@ def run_query(query: str, tickers: list[str] | None = None, conversation_history
         "tickers": tickers or [],
         "time_range": "all",
         "visual_intent": False,
+        "execution_plan": [],
+        "unknown_tickers": [],
         "retrieved_chunks": [],
         "retrieved_charts": [],
         "sql_results": [],
@@ -120,10 +133,11 @@ def run_query(query: str, tickers: list[str] | None = None, conversation_history
 
 # Human-readable labels for each graph node
 _NODE_LABELS: dict[str, str] = {
-    "classify_query": "Classifying query & extracting tickers",
+    "classify_query": "Planning execution & classifying query",
     "trend_agent": "Running trend analysis",
     "comparison_agent": "Running comparison analysis",
     "anomaly_agent": "Running anomaly detection",
+    "general_agent": "Running general filing lookup",
     "web_search_agent": "Searching web for real-time market context",
     "synthesizer": "Synthesizing final answer",
 }
@@ -135,8 +149,9 @@ def _extract_step_detail(node: str, state_update: dict[str, Any]) -> dict[str, A
         return {
             "query_type": state_update.get("query_type", "general"),
             "tickers": state_update.get("tickers", []),
+            "execution_plan": state_update.get("execution_plan", []),
         }
-    if node in ("trend_agent", "comparison_agent", "anomaly_agent"):
+    if node in ("trend_agent", "comparison_agent", "anomaly_agent", "general_agent"):
         return {
             "chunks_retrieved": len(state_update.get("retrieved_chunks", [])),
             "charts_retrieved": len(state_update.get("retrieved_charts", [])),
@@ -179,6 +194,8 @@ def run_query_stream(
         "tickers": tickers or [],
         "time_range": "all",
         "visual_intent": False,
+        "execution_plan": [],
+        "unknown_tickers": [],
         "retrieved_chunks": [],
         "retrieved_charts": [],
         "sql_results": [],
@@ -193,12 +210,20 @@ def run_query_stream(
 
     final_state: dict[str, Any] = {}
     step_index = 0
+    node_start: float | None = None
 
     for chunk in agent_graph.stream(initial_state, stream_mode="updates"):
         # chunk is {node_name: state_update_dict}
         for node_name, state_update in chunk.items():
             if node_name == "__start__":
+                node_start = time.time()
                 continue
+
+            # Measure duration: time from previous node_start (or stream start) to now
+            now = time.time()
+            started_at = node_start if node_start is not None else now
+            duration_ms = int((now - started_at) * 1000)
+
             final_state.update(state_update)
             event = {
                 "event": "step",
@@ -206,9 +231,13 @@ def run_query_stream(
                 "node": node_name,
                 "label": _NODE_LABELS.get(node_name, node_name),
                 "detail": _extract_step_detail(node_name, state_update),
+                "started_at": round(started_at, 3),
+                "duration_ms": duration_ms,
             }
             yield f"data: {json.dumps(event)}\n\n"
             step_index += 1
+            # Next node starts now
+            node_start = time.time()
 
     # Emit final result
     result_payload = {

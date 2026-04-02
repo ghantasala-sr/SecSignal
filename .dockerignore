@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+
+# Environment / secrets — NEVER bake into image
+.env
+.env.*
+*.pem
+*.key
+service-account-key.json
+credentials.json
+
+# Frontend (deployed separately on Vercel)
+secsignal/frontend/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# dbt / Airflow / data (not needed at runtime)
+dbt/
+airflow/
+data/
+*.csv
+*.parquet
+
+# Testing
+tests/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store

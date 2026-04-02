@@ -14,6 +14,12 @@ from secsignal.agents.tools.sql_tool import query_risk_factors
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
 from secsignal.agents.tools.chart_generator import generate_trend_charts
+# --- Advanced viz imports (removable: advanced-viz) ---
+from secsignal.agents.tools.chart_generator import (
+    generate_area_trend,
+    generate_financial_radar,
+)
+# --- End advanced viz imports ---
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +146,21 @@ def anomaly_agent(state: FilingState) -> dict:
             generated_charts.extend(trend_charts)
         except Exception:
             logger.exception("anomaly_trend_chart_failed", ticker=ticker)
+
+    # --- Advanced viz generation (removable: advanced-viz) ---
+    # Area charts with average reference line for flagged tickers
+    for ticker in chart_tickers[:3]:
+        try:
+            generated_charts.extend(generate_area_trend(ticker=ticker))
+        except Exception:
+            logger.exception("anomaly_area_failed", ticker=ticker)
+    # Radar charts for financial health context on flagged companies
+    for ticker in chart_tickers[:2]:
+        try:
+            generated_charts.extend(generate_financial_radar(ticker=ticker))
+        except Exception:
+            logger.exception("anomaly_radar_failed", ticker=ticker)
+    # --- End advanced viz generation ---
 
     logger.info(
         "anomaly_agent_done",

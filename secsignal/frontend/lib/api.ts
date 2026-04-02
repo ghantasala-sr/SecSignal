@@ -18,14 +18,34 @@ export interface ChartSeries {
   color: string;
 }
 
+// --- Advanced visualization types (removable: advanced-viz) ---
+export interface ChartReferenceLine {
+  value: number;
+  label: string;
+  color: string;
+  axis?: "x" | "y";
+}
+
+export interface ChartAnnotation {
+  x: string;
+  label: string;
+}
+// --- End advanced visualization types ---
+
 export interface GeneratedChart {
-  chart_type: "bar" | "line" | "grouped_bar";
+  // Extended chart types (removable: advanced-viz adds composed/area/pie/radar/waterfall)
+  chart_type: "bar" | "line" | "grouped_bar" | "composed" | "area" | "pie" | "radar" | "waterfall";
   title: string;
   category: string;
   unit: string;
   ticker: string;
   data: ChartDataPoint[];
   series?: ChartSeries[];
+  // --- Advanced viz options (removable: advanced-viz) ---
+  reference_lines?: ChartReferenceLine[];
+  annotations?: ChartAnnotation[];
+  width_hint?: "full" | "half";
+  // --- End advanced viz options ---
 }
 
 export interface RetrievedChart {

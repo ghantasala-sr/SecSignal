@@ -7,7 +7,7 @@ import { ThreadMessage } from "@/components/thread-message";
 import { TrendingUp, GitCompareArrows, AlertTriangle } from "lucide-react";
 
 export default function Home() {
-  const { messages, loading, submit, cancel, clearThread } = useQueryStream();
+  const { messages, loading, submit, cancel, retry, clearThread } = useQueryStream();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const hasMessages = messages.length > 0;
@@ -69,6 +69,7 @@ export default function Home() {
               <div className="pt-2">
                 <QueryInput
                   onSubmit={handleQuery}
+                  onCancel={cancel}
                   loading={loading}
                   hasThread={false}
                 />
@@ -91,6 +92,7 @@ export default function Home() {
                 key={msg.id}
                 message={msg}
                 isLatest={i === messages.length - 1}
+                onRetry={retry}
               />
             ))}
           </div>
@@ -103,6 +105,7 @@ export default function Home() {
           <div className="max-w-3xl mx-auto">
             <QueryInput
               onSubmit={handleQuery}
+              onCancel={cancel}
               loading={loading}
               hasThread={true}
             />

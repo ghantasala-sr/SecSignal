@@ -18,6 +18,15 @@ from secsignal.agents.tools.sql_tool import (
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
 from secsignal.agents.tools.chart_generator import generate_chart_data, generate_comparison_chart, generate_trend_charts
+# --- Advanced viz imports (removable: advanced-viz) ---
+from secsignal.agents.tools.chart_generator import (
+    generate_comparison_radar,
+    generate_risk_comparison_composed,
+    generate_composed_revenue_margin,
+    generate_expense_pie,
+    generate_income_waterfall,
+)
+# --- End advanced viz imports ---
 
 logger = structlog.get_logger(__name__)
 
@@ -150,6 +159,35 @@ def comparison_agent(state: FilingState) -> dict:
             generated_charts.extend(trend_charts)
         except Exception:
             logger.exception("comparison_trend_chart_failed", ticker=ticker)
+
+    # --- Advanced viz generation (removable: advanced-viz) ---
+    # Multi-ticker radar comparison
+    try:
+        generated_charts.extend(generate_comparison_radar(tickers=tickers))
+    except Exception:
+        logger.exception("comparison_radar_failed")
+
+    # Composed chart: risk word count (bars) + delta % (line) across tickers
+    try:
+        generated_charts.extend(generate_risk_comparison_composed(tickers=tickers))
+    except Exception:
+        logger.exception("comparison_risk_composed_failed")
+
+    # Per-ticker rich charts (first 2 tickers to limit chart count)
+    for ticker in tickers[:2]:
+        try:
+            generated_charts.extend(generate_composed_revenue_margin(ticker=ticker))
+        except Exception:
+            logger.exception("comparison_composed_failed", ticker=ticker)
+        try:
+            generated_charts.extend(generate_expense_pie(ticker=ticker))
+        except Exception:
+            logger.exception("comparison_pie_failed", ticker=ticker)
+        try:
+            generated_charts.extend(generate_income_waterfall(ticker=ticker))
+        except Exception:
+            logger.exception("comparison_waterfall_failed", ticker=ticker)
+    # --- End advanced viz generation ---
 
     logger.info(
         "comparison_agent_done",

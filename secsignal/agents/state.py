@@ -49,7 +49,7 @@ class AnomalyScore(TypedDict):
 class FilingState(TypedDict):
     """Shared state for the SecSignal LangGraph agent system.
 
-    Flows: supervisor → [trend|comparison|anomaly] → synthesizer
+    Flows: planner → [dynamic fan-out to selected agents] → synthesizer
     """
 
     # Input
@@ -58,6 +58,10 @@ class FilingState(TypedDict):
     tickers: list[str]
     time_range: str  # e.g. "last 8 quarters", "2023-2024"
     visual_intent: bool  # whether user wants chart/graph results
+
+    # Execution plan (set by planner, consumed by graph routing)
+    execution_plan: list[str]  # e.g. ["trend_agent", "web_search_agent"]
+    unknown_tickers: list[str]  # tickers not found in our filing database
 
     # Retrieved data (accumulated by specialist agents)
     retrieved_chunks: Annotated[list[RetrievedChunk], operator.add]

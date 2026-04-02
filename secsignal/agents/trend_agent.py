@@ -13,6 +13,15 @@ from secsignal.agents.tools.sql_tool import query_financials, query_risk_factors
 from secsignal.agents.tools.semantic_tool import search_filing_text
 from secsignal.agents.tools.visual_tool import search_charts
 from secsignal.agents.tools.chart_generator import generate_chart_data, generate_trend_charts
+# --- Advanced viz imports (removable: advanced-viz) ---
+from secsignal.agents.tools.chart_generator import (
+    generate_composed_revenue_margin,
+    generate_area_trend,
+    generate_expense_pie,
+    generate_financial_radar,
+    generate_income_waterfall,
+)
+# --- End advanced viz imports ---
 
 logger = structlog.get_logger(__name__)
 
@@ -133,6 +142,35 @@ def trend_agent(state: FilingState) -> dict:
         generated_charts.extend(trend_charts)
     except Exception:
         logger.exception("trend_line_chart_failed", ticker=ticker)
+
+    # --- Advanced viz generation (removable: advanced-viz) ---
+    if ticker:
+        # Composed bar+line: revenue vs margin in one chart
+        try:
+            generated_charts.extend(generate_composed_revenue_margin(ticker=ticker))
+        except Exception:
+            logger.exception("trend_composed_failed", ticker=ticker)
+        # Area chart: risk disclosure volume with avg reference line
+        try:
+            generated_charts.extend(generate_area_trend(ticker=ticker))
+        except Exception:
+            logger.exception("trend_area_failed", ticker=ticker)
+        # Pie chart: expense breakdown
+        try:
+            generated_charts.extend(generate_expense_pie(ticker=ticker))
+        except Exception:
+            logger.exception("trend_pie_failed", ticker=ticker)
+        # Radar chart: financial health profile
+        try:
+            generated_charts.extend(generate_financial_radar(ticker=ticker))
+        except Exception:
+            logger.exception("trend_radar_failed", ticker=ticker)
+        # Waterfall: income statement flow
+        try:
+            generated_charts.extend(generate_income_waterfall(ticker=ticker))
+        except Exception:
+            logger.exception("trend_waterfall_failed", ticker=ticker)
+    # --- End advanced viz generation ---
 
     logger.info(
         "trend_agent_done",

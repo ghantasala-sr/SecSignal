@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { QueryResponse } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -7,6 +8,7 @@ import { ChartPanel } from "@/components/chart-panel";
 import { AnomalyCard } from "@/components/anomaly-card";
 import { SourceList } from "@/components/source-list";
 import { WebSourceList } from "@/components/web-source-list";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -21,6 +23,10 @@ const queryTypeLabels: Record<string, string> = {
 };
 
 export function AnalysisResult({ data }: AnalysisResultProps) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const hasSources = data.sources.length > 0 || data.web_sources.length > 0;
+  const totalSources = data.sources.length + data.web_sources.length;
+
   return (
     <div className="max-w-4xl space-y-6 animate-in fade-in duration-300">
       {/* Header row */}
@@ -41,6 +47,7 @@ export function AnalysisResult({ data }: AnalysisResultProps) {
       </div>
 
       {/* Generated charts */}
+      {/* --- Advanced viz grid (removable: advanced-viz) --- */}
       {data.generated_charts.length > 0 && (
         <>
           <Separator className="opacity-20" />
@@ -48,12 +55,22 @@ export function AnalysisResult({ data }: AnalysisResultProps) {
             <h4 className="text-sm font-medium text-foreground/70">Charts</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {data.generated_charts.map((chart, i) => (
-                <ChartPanel key={i} chart={chart} />
+                <div
+                  key={i}
+                  className={
+                    chart.width_hint === "full"
+                      ? "md:col-span-2"
+                      : ""
+                  }
+                >
+                  <ChartPanel chart={chart} />
+                </div>
               ))}
             </div>
           </div>
         </>
       )}
+      {/* --- End advanced viz grid --- */}
 
       {/* Anomalies */}
       {data.anomalies.length > 0 && (
@@ -72,19 +89,36 @@ export function AnalysisResult({ data }: AnalysisResultProps) {
         </>
       )}
 
-      {/* Sources */}
-      {data.sources.length > 0 && (
+      {/* Sources — collapsible dropdown */}
+      {hasSources && (
         <>
           <Separator className="opacity-20" />
-          <SourceList sources={data.sources} />
-        </>
-      )}
-
-      {/* Web Sources */}
-      {data.web_sources.length > 0 && (
-        <>
-          <Separator className="opacity-20" />
-          <WebSourceList sources={data.web_sources} />
+          <div className="space-y-2">
+            <button
+              onClick={() => setSourcesOpen((o) => !o)}
+              className="flex items-center gap-2 text-sm font-medium text-foreground/70 hover:text-foreground/90 transition-colors w-full text-left"
+            >
+              {sourcesOpen ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              <span>Sources</span>
+              <Badge variant="secondary" className="text-[10px] ml-1">
+                {totalSources}
+              </Badge>
+            </button>
+            {sourcesOpen && (
+              <div className="space-y-4 pl-6 animate-in slide-in-from-top-1 duration-200">
+                {data.sources.length > 0 && (
+                  <SourceList sources={data.sources} />
+                )}
+                {data.web_sources.length > 0 && (
+                  <WebSourceList sources={data.web_sources} />
+                )}
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

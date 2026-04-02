@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, User } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw, User } from "lucide-react";
 import type { ThreadMessage as ThreadMessageType } from "@/lib/use-query-stream";
 import { AgentTrajectory } from "@/components/agent-trajectory";
 import { AnalysisResult } from "@/components/analysis-result";
@@ -10,9 +10,24 @@ import { AnalysisSkeleton } from "@/components/analysis-skeleton";
 interface ThreadMessageProps {
   message: ThreadMessageType;
   isLatest: boolean;
+  onRetry?: (messageId: string) => void;
 }
 
-export function ThreadMessage({ message, isLatest }: ThreadMessageProps) {
+/** Sum up duration_ms across all completed trajectory steps. */
+function totalElapsedMs(message: ThreadMessageType): number | null {
+  const durations = message.trajectory
+    .map((s) => s.duration_ms)
+    .filter((d): d is number => d != null);
+  if (durations.length === 0) return null;
+  return durations.reduce((a, b) => a + b, 0);
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+export function ThreadMessage({ message, isLatest, onRetry }: ThreadMessageProps) {
   const [trajectoryOpen, setTrajectoryOpen] = useState(isLatest);
 
   return (
@@ -42,6 +57,10 @@ export function ThreadMessage({ message, isLatest }: ThreadMessageProps) {
             <span>
               {message.trajectory.length} agent step
               {message.trajectory.length !== 1 ? "s" : ""}
+              {(() => {
+                const total = totalElapsedMs(message);
+                return total != null ? ` \u00b7 ${formatMs(total)}` : "";
+              })()}
             </span>
           </button>
           {trajectoryOpen && (
@@ -72,6 +91,15 @@ export function ThreadMessage({ message, isLatest }: ThreadMessageProps) {
       {message.error && (
         <div className="ml-9 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
           <p className="text-sm text-destructive">{message.error}</p>
+          {onRetry && (
+            <button
+              onClick={() => onRetry(message.id)}
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-destructive hover:text-destructive/80 transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </button>
+          )}
         </div>
       )}
 

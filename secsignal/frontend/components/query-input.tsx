@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 
 interface QueryInputProps {
   onSubmit: (query: string) => void;
+  onCancel?: () => void;
   loading: boolean;
   hasThread: boolean;
 }
 
-export function QueryInput({ onSubmit, loading, hasThread }: QueryInputProps) {
+export function QueryInput({ onSubmit, onCancel, loading, hasThread }: QueryInputProps) {
   const [query, setQuery] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
@@ -33,17 +34,24 @@ export function QueryInput({ onSubmit, loading, hasThread }: QueryInputProps) {
           disabled={loading}
         />
       </div>
-      <button
-        type="submit"
-        disabled={loading || !query.trim()}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-40 hover:bg-primary/90 transition-colors"
-      >
-        {loading ? (
-          <div className="h-4 w-4 rounded-full border-2 border-primary-foreground border-t-transparent animate-spin" />
-        ) : (
+      {loading ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+          title="Stop analysis"
+        >
+          <Square className="h-3.5 w-3.5 fill-current" />
+        </button>
+      ) : (
+        <button
+          type="submit"
+          disabled={!query.trim()}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-40 hover:bg-primary/90 transition-colors"
+        >
           <ArrowUp className="h-4 w-4" />
-        )}
-      </button>
+        </button>
+      )}
     </form>
   );
 }
