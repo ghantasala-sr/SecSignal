@@ -89,6 +89,9 @@ export interface QueryResponse {
   anomalies: AnomalyScore[];
   generated_charts: GeneratedChart[];
   web_sources: WebSource[];
+  follow_up_questions: string[];
+  confidence_score: number;
+  confidence_factors: Record<string, unknown>;
 }
 
 export interface QueryRequest {

@@ -23,6 +23,9 @@ from secsignal.agents.trend_agent import trend_agent
 from secsignal.agents.comparison_agent import comparison_agent
 from secsignal.agents.anomaly_agent import anomaly_agent
 from secsignal.agents.general_agent import general_agent
+from secsignal.agents.valuation_agent import valuation_agent
+from secsignal.agents.sentiment_agent import sentiment_agent
+from secsignal.agents.peer_group_agent import peer_group_agent
 from secsignal.agents.synthesizer import synthesizer
 from secsignal.agents.web_search_agent import web_search_agent
 
@@ -48,6 +51,9 @@ def build_graph() -> StateGraph:
     graph.add_node("comparison_agent", comparison_agent)
     graph.add_node("anomaly_agent", anomaly_agent)
     graph.add_node("general_agent", general_agent)
+    graph.add_node("valuation_agent", valuation_agent)
+    graph.add_node("sentiment_agent", sentiment_agent)
+    graph.add_node("peer_group_agent", peer_group_agent)
     graph.add_node("web_search_agent", web_search_agent)
     graph.add_node("synthesizer", synthesizer)
 
@@ -64,6 +70,9 @@ def build_graph() -> StateGraph:
             "comparison_agent",
             "anomaly_agent",
             "general_agent",
+            "valuation_agent",
+            "sentiment_agent",
+            "peer_group_agent",
             "web_search_agent",
         ],
     )
@@ -73,6 +82,9 @@ def build_graph() -> StateGraph:
     graph.add_edge("comparison_agent", "synthesizer")
     graph.add_edge("anomaly_agent", "synthesizer")
     graph.add_edge("general_agent", "synthesizer")
+    graph.add_edge("valuation_agent", "synthesizer")
+    graph.add_edge("sentiment_agent", "synthesizer")
+    graph.add_edge("peer_group_agent", "synthesizer")
     graph.add_edge("web_search_agent", "synthesizer")
 
     # Synthesizer is the terminal node
@@ -109,11 +121,16 @@ def run_query(query: str, tickers: list[str] | None = None, conversation_history
         "sql_results": [],
         "anomaly_scores": [],
         "generated_charts": [],
+        "valuation_metrics": [],
+        "sentiment_scores": [],
         "web_context": "",
         "web_sources": [],
         "conversation_history": conversation_history or [],
         "final_answer": "",
         "sources": [],
+        "follow_up_questions": [],
+        "confidence_score": 0.0,
+        "confidence_factors": {},
     }
 
     result = agent_graph.invoke(initial_state)
@@ -128,6 +145,9 @@ def run_query(query: str, tickers: list[str] | None = None, conversation_history
         "anomaly_scores": result.get("anomaly_scores", []),
         "generated_charts": result.get("generated_charts", []),
         "web_sources": result.get("web_sources", []),
+        "follow_up_questions": result.get("follow_up_questions", []),
+        "confidence_score": result.get("confidence_score", 0.0),
+        "confidence_factors": result.get("confidence_factors", {}),
     }
 
 
@@ -138,6 +158,9 @@ _NODE_LABELS: dict[str, str] = {
     "comparison_agent": "Running comparison analysis",
     "anomaly_agent": "Running anomaly detection",
     "general_agent": "Running general filing lookup",
+    "valuation_agent": "Computing valuation multiples & DCF estimates",
+    "sentiment_agent": "Analyzing filing sentiment & tone shifts",
+    "peer_group_agent": "Comparing against sector peers",
     "web_search_agent": "Searching web for real-time market context",
     "synthesizer": "Synthesizing final answer",
 }
@@ -151,12 +174,24 @@ def _extract_step_detail(node: str, state_update: dict[str, Any]) -> dict[str, A
             "tickers": state_update.get("tickers", []),
             "execution_plan": state_update.get("execution_plan", []),
         }
-    if node in ("trend_agent", "comparison_agent", "anomaly_agent", "general_agent"):
+    if node in ("trend_agent", "comparison_agent", "anomaly_agent", "general_agent", "peer_group_agent"):
         return {
             "chunks_retrieved": len(state_update.get("retrieved_chunks", [])),
             "charts_retrieved": len(state_update.get("retrieved_charts", [])),
             "charts_generated": len(state_update.get("generated_charts", [])),
             "anomalies_found": len(state_update.get("anomaly_scores", [])),
+        }
+    if node == "valuation_agent":
+        return {
+            "chunks_retrieved": len(state_update.get("retrieved_chunks", [])),
+            "charts_generated": len(state_update.get("generated_charts", [])),
+            "valuations_computed": len(state_update.get("valuation_metrics", [])),
+        }
+    if node == "sentiment_agent":
+        return {
+            "chunks_retrieved": len(state_update.get("retrieved_chunks", [])),
+            "charts_generated": len(state_update.get("generated_charts", [])),
+            "sentiments_scored": len(state_update.get("sentiment_scores", [])),
         }
     if node == "web_search_agent":
         ctx = state_update.get("web_context", "")
@@ -201,11 +236,16 @@ def run_query_stream(
         "sql_results": [],
         "anomaly_scores": [],
         "generated_charts": [],
+        "valuation_metrics": [],
+        "sentiment_scores": [],
         "web_context": "",
         "web_sources": [],
         "conversation_history": conversation_history or [],
         "final_answer": "",
         "sources": [],
+        "follow_up_questions": [],
+        "confidence_score": 0.0,
+        "confidence_factors": {},
     }
 
     final_state: dict[str, Any] = {}
@@ -252,6 +292,9 @@ def run_query_stream(
             "anomaly_scores": final_state.get("anomaly_scores", []),
             "generated_charts": final_state.get("generated_charts", []),
             "web_sources": final_state.get("web_sources", []),
+            "follow_up_questions": final_state.get("follow_up_questions", []),
+            "confidence_score": final_state.get("confidence_score", 0.0),
+            "confidence_factors": final_state.get("confidence_factors", {}),
         },
     }
     yield f"data: {json.dumps(result_payload)}\n\n"

@@ -34,6 +34,10 @@ SYNTHESIS_PROMPT = """You are an elite sell-side equity research analyst produci
 
 {anomaly_context}
 
+{valuation_context}
+
+{sentiment_context}
+
 {chart_context}
 
 {web_context}
@@ -78,8 +82,10 @@ Answer:"""
 def synthesizer(state: FilingState) -> dict:
     """Generate the final cited answer from all retrieved data.
 
-    Merges text chunks, SQL results, anomaly scores, and chart metadata
-    into a structured prompt, then calls Cortex COMPLETE for synthesis.
+    Merges text chunks, SQL results, anomaly scores, valuation metrics,
+    sentiment scores, and chart metadata into a structured prompt, then
+    calls Cortex COMPLETE for synthesis.  Also generates follow-up
+    questions and computes a confidence score.
     """
     query = state["query"]
     query_type = state.get("query_type", "general")
@@ -87,29 +93,21 @@ def synthesizer(state: FilingState) -> dict:
     sql_results = state.get("sql_results", [])
     anomaly_scores = state.get("anomaly_scores", [])
     retrieved_charts = state.get("retrieved_charts", [])
+    valuation_metrics = state.get("valuation_metrics", [])
+    sentiment_scores = state.get("sentiment_scores", [])
     web_context_raw = state.get("web_context", "")
     history_raw = state.get("conversation_history", [])
     unknown_tickers = state.get("unknown_tickers", [])
 
-    # Format text context
+    # Format all context sections
     text_context = _format_text_chunks(retrieved_chunks)
-
-    # Format SQL context
     sql_context = _format_sql_results(sql_results)
-
-    # Format anomaly context
     anomaly_context = _format_anomalies(anomaly_scores)
-
-    # Format chart context (descriptions only, not base64 data)
+    valuation_context = _format_valuation_metrics(valuation_metrics)
+    sentiment_context = _format_sentiment_scores(sentiment_scores)
     chart_context = _format_charts(retrieved_charts)
-
-    # Format web context
     web_context = _format_web_context(web_context_raw)
-
-    # Format unknown tickers notice
     unknown_tickers_context = _format_unknown_tickers(unknown_tickers)
-
-    # Format conversation history
     conversation_history = _format_conversation_history(history_raw)
 
     prompt = SYNTHESIS_PROMPT.format(
@@ -118,6 +116,8 @@ def synthesizer(state: FilingState) -> dict:
         text_context=text_context or "No text results retrieved.",
         sql_context=sql_context or "No structured data retrieved.",
         anomaly_context=anomaly_context,
+        valuation_context=valuation_context,
+        sentiment_context=sentiment_context,
         chart_context=chart_context,
         web_context=web_context,
         unknown_tickers_context=unknown_tickers_context,
@@ -137,16 +137,30 @@ def synthesizer(state: FilingState) -> dict:
         # Build source citations
         sources = _build_sources(retrieved_chunks, sql_results)
 
+        # Generate follow-up questions
+        follow_ups = _generate_follow_ups(cursor, query, answer, query_type)
+
+        # Compute confidence score
+        confidence_score, confidence_factors = _compute_confidence(
+            retrieved_chunks, sql_results, anomaly_scores,
+            valuation_metrics, sentiment_scores, web_context_raw,
+        )
+
         logger.info(
             "synthesizer_done",
             query_type=query_type,
             answer_len=len(answer),
             sources=len(sources),
+            follow_ups=len(follow_ups),
+            confidence=round(confidence_score, 2),
         )
 
         return {
             "final_answer": answer,
             "sources": sources,
+            "follow_up_questions": follow_ups,
+            "confidence_score": confidence_score,
+            "confidence_factors": confidence_factors,
         }
 
     except Exception:
@@ -154,6 +168,9 @@ def synthesizer(state: FilingState) -> dict:
         return {
             "final_answer": "An error occurred while generating the response. Please try again.",
             "sources": [],
+            "follow_up_questions": [],
+            "confidence_score": 0.0,
+            "confidence_factors": {},
         }
     finally:
         cursor.close()
@@ -309,3 +326,151 @@ def _format_unknown_tickers(unknown_tickers: list[str]) -> str:
         f"If no web results are available either, tell the user we have no data for these tickers "
         f"and suggest they ask about one of the supported tickers instead."
     )
+
+
+def _format_valuation_metrics(metrics: list[dict[str, Any]]) -> str:
+    """Format valuation metrics for the synthesis prompt."""
+    if not metrics:
+        return ""
+    parts = ["**Valuation Metrics (computed from filing financials):**"]
+    for m in metrics:
+        ticker = m.get("ticker", "?")
+        parts.append(f"\n**{ticker}** (filing: {m.get('latest_filing_date', '?')}):")
+        if m.get("total_revenue_m"):
+            parts.append(f"  - Revenue: ${m['total_revenue_m']:,.0f}M")
+        if m.get("net_income_m"):
+            parts.append(f"  - Net Income: ${m['net_income_m']:,.0f}M")
+        if m.get("revenue_growth_pct"):
+            parts.append(f"  - Revenue Growth: {m['revenue_growth_pct']:.1f}%")
+        if m.get("gross_margin_pct"):
+            parts.append(f"  - Gross Margin: {m['gross_margin_pct']:.1f}%")
+        if m.get("operating_margin_pct"):
+            parts.append(f"  - Operating Margin: {m['operating_margin_pct']:.1f}%")
+        if m.get("profit_margin_pct"):
+            parts.append(f"  - Profit Margin: {m['profit_margin_pct']:.1f}%")
+        if m.get("eps"):
+            parts.append(f"  - EPS: ${m['eps']:.2f}")
+        if m.get("implied_pe_from_growth"):
+            parts.append(f"  - Implied P/E (growth-based): {m['implied_pe_from_growth']:.1f}x")
+        if m.get("dcf_projections"):
+            parts.append("  - DCF Projections (10% WACC):")
+            for p in m["dcf_projections"]:
+                parts.append(
+                    f"    Year {p['year']}: ${p['projected_revenue_m']:,.0f}M "
+                    f"(PV: ${p['discounted_revenue_m']:,.0f}M)"
+                )
+        if m.get("terminal_value_m"):
+            parts.append(f"  - Terminal Value: ${m['terminal_value_m']:,.0f}M")
+    return "\n".join(parts)
+
+
+def _format_sentiment_scores(scores: list[dict[str, Any]]) -> str:
+    """Format sentiment analysis results for the synthesis prompt."""
+    if not scores:
+        return ""
+    parts = ["**Sentiment Analysis (tone scoring from filing text):**"]
+    for s in scores:
+        ticker = s.get("ticker", "?")
+        sentiment = s.get("sentiment", "neutral")
+        confidence = s.get("confidence", 0)
+        date = s.get("filing_date", "?")
+        section = s.get("section", "?")
+        summary = s.get("summary", "")
+        signals = ", ".join(s.get("tone_signals", []))
+        parts.append(
+            f"- {ticker} ({date}, {section}): **{sentiment}** "
+            f"(confidence: {confidence:.0%}) — {summary}"
+        )
+        if signals:
+            parts.append(f"  Key signals: {signals}")
+    return "\n".join(parts)
+
+
+FOLLOW_UP_PROMPT = """Based on this Q&A about SEC filings, suggest exactly 3 short follow-up questions the user might ask next. Each should explore a different angle (e.g., deeper dive, comparison, risk, outlook).
+
+Query type: {query_type}
+User question: {query}
+Answer summary (first 500 chars): {answer_summary}
+
+Output ONLY a JSON array of 3 strings, no markdown:
+["question 1", "question 2", "question 3"]"""
+
+
+def _generate_follow_ups(
+    cursor, query: str, answer: str, query_type: str,
+) -> list[str]:
+    """Generate 3 suggested follow-up questions using Cortex COMPLETE."""
+    try:
+        prompt = FOLLOW_UP_PROMPT.format(
+            query_type=query_type,
+            query=query,
+            answer_summary=answer[:500],
+        )
+        cursor.execute(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response",
+            (LLM_MODEL, prompt),
+        )
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return []
+        raw = row[0].strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        questions = json.loads(raw)
+        if isinstance(questions, list):
+            return [str(q) for q in questions[:3]]
+        return []
+    except Exception:
+        logger.exception("follow_up_generation_failed")
+        return []
+
+
+def _compute_confidence(
+    chunks: list[dict],
+    sql_results: list[dict],
+    anomalies: list[dict],
+    valuation_metrics: list[dict],
+    sentiment_scores: list[dict],
+    web_context: str,
+) -> tuple[float, dict[str, Any]]:
+    """Compute a confidence score (0.0-1.0) based on data availability and quality."""
+    factors: dict[str, Any] = {}
+    scores: list[float] = []
+
+    # Source coverage (0-1): more sources = higher confidence
+    source_count = len(chunks) + len(sql_results)
+    source_score = min(1.0, source_count / 10)
+    factors["source_coverage"] = {"count": source_count, "score": round(source_score, 2)}
+    scores.append(source_score)
+
+    # Relevance quality: average similarity score from retrieved chunks
+    if chunks:
+        avg_relevance = sum(c.get("score", 0) for c in chunks) / len(chunks)
+        factors["avg_relevance"] = round(avg_relevance, 3)
+        scores.append(min(1.0, avg_relevance))
+    else:
+        factors["avg_relevance"] = 0
+        scores.append(0.2)
+
+    # Data richness: did specialized agents produce results?
+    richness_score = 0.5  # base
+    if valuation_metrics:
+        richness_score += 0.15
+    if sentiment_scores:
+        richness_score += 0.15
+    if anomalies:
+        richness_score += 0.1
+    if web_context:
+        richness_score += 0.1
+    richness_score = min(1.0, richness_score)
+    factors["data_richness"] = round(richness_score, 2)
+    scores.append(richness_score)
+
+    # Overall confidence is weighted average
+    if scores:
+        overall = sum(scores) / len(scores)
+    else:
+        overall = 0.3
+
+    return round(overall, 2), factors

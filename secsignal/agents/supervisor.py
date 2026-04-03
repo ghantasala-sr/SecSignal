@@ -28,7 +28,10 @@ logger = structlog.get_logger(__name__)
 LLM_MODEL = os.environ.get("CORTEX_LLM_MODEL", "claude-sonnet-4-6")
 
 # Valid agent nodes that the planner can include in execution_plan
-VALID_AGENTS = {"trend_agent", "comparison_agent", "anomaly_agent", "general_agent", "web_search_agent"}
+VALID_AGENTS = {
+    "trend_agent", "comparison_agent", "anomaly_agent", "general_agent",
+    "web_search_agent", "valuation_agent", "sentiment_agent", "peer_group_agent",
+}
 
 PLANNING_PROMPT = """You are a financial query planner for an SEC filing analysis system. Analyze the user query and output a JSON object with these fields:
 
@@ -46,18 +49,26 @@ PLANNING_PROMPT = """You are a financial query planner for an SEC filing analysi
   - "comparison_agent": retrieves and compares data across multiple companies. Use when 2+ tickers are involved.
   - "anomaly_agent": runs z-score anomaly detection on financial metrics. Use for outlier/red-flag questions.
   - "general_agent": does broad semantic search and SQL lookups across all filings. Use for factual questions, filing lookups, or when no specialist fits.
+  - "valuation_agent": computes financial multiples (P/E, margins), revenue multiples, and basic DCF projections from extracted financials. Use for valuation questions, earnings multiples, financial health assessments, or "is X overvalued/undervalued" questions.
+  - "sentiment_agent": analyzes tone and sentiment shifts in MD&A and risk factor sections across filing periods. Use for questions about management tone, optimism/pessimism, outlook changes, or "how has the tone changed" questions.
+  - "peer_group_agent": compares a company against sector peers on financial metrics. Use for "how does X compare to peers", sector analysis, competitive positioning, or industry benchmarking questions.
   - "web_search_agent": searches the web for recent news, market context, or information NOT in SEC filings. ONLY include this when the query explicitly asks about recent news, market sentiment, stock price, current events, or information that would not be in SEC filings.
 
 RULES for execution_plan:
-1. Always include exactly ONE specialist: trend_agent, comparison_agent, anomaly_agent, or general_agent.
-2. ONLY add "web_search_agent" if the query needs external/web information. Most filing questions do NOT need web search.
-3. If unsure whether web search is needed, do NOT include it. Filing data is sufficient for most questions.
+1. Always include at least ONE primary specialist: trend_agent, comparison_agent, anomaly_agent, valuation_agent, sentiment_agent, peer_group_agent, or general_agent.
+2. You may combine specialists when the query spans multiple domains (e.g. valuation + sentiment, or comparison + peer_group).
+3. ONLY add "web_search_agent" if the query needs external/web information. Most filing questions do NOT need web search.
+4. If unsure whether web search is needed, do NOT include it. Filing data is sufficient for most questions.
 
 Examples:
 - "How has Apple's revenue changed over the last 4 quarters?" → ["trend_agent"]
 - "Compare AAPL and MSFT risk factors" → ["comparison_agent"]
 - "Any unusual changes in NVDA's financials?" → ["anomaly_agent"]
 - "What did Tesla say about supply chain risks?" → ["general_agent"]
+- "What is NVDA's P/E ratio and how does their valuation look?" → ["valuation_agent"]
+- "How has Tesla's management tone changed in recent filings?" → ["sentiment_agent"]
+- "How does MSFT compare to other cloud companies?" → ["peer_group_agent"]
+- "Is NVDA overvalued compared to peers?" → ["valuation_agent", "peer_group_agent"]
 - "What's the latest news on AAPL earnings and how does it compare to their filing?" → ["trend_agent", "web_search_agent"]
 - "How is NVDA stock performing after their latest 10-K?" → ["general_agent", "web_search_agent"]
 
@@ -240,7 +251,10 @@ def _parse_classification(raw: str, original_query: str = "") -> dict[str, Any]:
     execution_plan = [n for n in execution_plan if n in VALID_AGENTS]
 
     # Ensure at least one specialist is in the plan
-    specialists = {"trend_agent", "comparison_agent", "anomaly_agent", "general_agent"}
+    specialists = {
+        "trend_agent", "comparison_agent", "anomaly_agent", "general_agent",
+        "valuation_agent", "sentiment_agent", "peer_group_agent",
+    }
     has_specialist = any(n in specialists for n in execution_plan)
     if not has_specialist:
         # Map query_type to default specialist

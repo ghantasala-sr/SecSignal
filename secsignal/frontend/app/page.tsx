@@ -4,7 +4,8 @@ import { useEffect, useRef } from "react";
 import { useQueryStream } from "@/lib/use-query-stream";
 import { QueryInput } from "@/components/query-input";
 import { ThreadMessage } from "@/components/thread-message";
-import { TrendingUp, GitCompareArrows, AlertTriangle } from "lucide-react";
+import { TrendingUp, GitCompareArrows, AlertTriangle, DollarSign, MessageSquare, Users } from "lucide-react";
+import { Watchlist } from "@/components/watchlist";
 
 export default function Home() {
   const { messages, loading, submit, cancel, retry, clearThread } = useQueryStream();
@@ -64,6 +65,32 @@ export default function Home() {
                   example="Find anomalies in recent tech company filings"
                   onExample={handleQuery}
                 />
+                <CapabilityCard
+                  icon={<DollarSign className="w-4 h-4" />}
+                  title="Valuation"
+                  description="Financial multiples, margins & DCF"
+                  example="What is NVDA's valuation profile and P/E ratio?"
+                  onExample={handleQuery}
+                />
+                <CapabilityCard
+                  icon={<MessageSquare className="w-4 h-4" />}
+                  title="Sentiment"
+                  description="Tone shifts in MD&A & risk factors"
+                  example="How has Tesla's management tone changed in recent filings?"
+                  onExample={handleQuery}
+                />
+                <CapabilityCard
+                  icon={<Users className="w-4 h-4" />}
+                  title="Peer Group"
+                  description="Sector-wide comparison & benchmarking"
+                  example="How does MSFT compare to other cloud companies?"
+                  onExample={handleQuery}
+                />
+              </div>
+
+              {/* Portfolio watchlist */}
+              <div className="pt-2 max-w-md mx-auto w-full">
+                <Watchlist onQuery={handleQuery} />
               </div>
 
               <div className="pt-2">
@@ -93,6 +120,7 @@ export default function Home() {
                 message={msg}
                 isLatest={i === messages.length - 1}
                 onRetry={retry}
+                onFollowUp={handleQuery}
               />
             ))}
           </div>

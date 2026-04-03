@@ -86,6 +86,9 @@ class QueryResponse(BaseModel):
     anomalies: list[dict[str, Any]]
     generated_charts: list[dict[str, Any]]
     web_sources: list[dict[str, Any]]
+    follow_up_questions: list[str] = []
+    confidence_score: float = 0.0
+    confidence_factors: dict[str, Any] = {}
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -129,6 +132,9 @@ async def query_endpoint(request: Request, body: QueryRequest) -> QueryResponse:
         anomalies=result.get("anomaly_scores", []),
         generated_charts=result.get("generated_charts", []),
         web_sources=result.get("web_sources", []),
+        follow_up_questions=result.get("follow_up_questions", []),
+        confidence_score=result.get("confidence_score", 0.0),
+        confidence_factors=result.get("confidence_factors", {}),
     )
 
 

@@ -11,6 +11,7 @@ interface ThreadMessageProps {
   message: ThreadMessageType;
   isLatest: boolean;
   onRetry?: (messageId: string) => void;
+  onFollowUp?: (query: string) => void;
 }
 
 /** Sum up duration_ms across all completed trajectory steps. */
@@ -27,7 +28,7 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export function ThreadMessage({ message, isLatest, onRetry }: ThreadMessageProps) {
+export function ThreadMessage({ message, isLatest, onRetry, onFollowUp }: ThreadMessageProps) {
   const [trajectoryOpen, setTrajectoryOpen] = useState(isLatest);
 
   return (
@@ -106,7 +107,7 @@ export function ThreadMessage({ message, isLatest, onRetry }: ThreadMessageProps
       {/* Result */}
       {message.result && (
         <div className="ml-0">
-          <AnalysisResult data={message.result} />
+          <AnalysisResult data={message.result} onFollowUp={onFollowUp} />
         </div>
       )}
     </div>

@@ -10,7 +10,7 @@ const STREAM_BASE =
 const SUMMARIZE_THRESHOLD = 1500;
 
 /** If no SSE event arrives for this long, treat the stream as timed out. */
-const STREAM_TIMEOUT_MS = 90_000;
+const STREAM_TIMEOUT_MS = 300_000; // 5 minutes
 
 /** localStorage key for persisted thread. */
 const STORAGE_KEY = "secsignal-thread";
@@ -283,6 +283,11 @@ export function useQueryStream() {
                   []) as QueryResponse["generated_charts"],
                 web_sources: (raw.web_sources ??
                   []) as QueryResponse["web_sources"],
+                follow_up_questions: (raw.follow_up_questions ??
+                  []) as string[],
+                confidence_score: (raw.confidence_score ?? 0) as number,
+                confidence_factors: (raw.confidence_factors ??
+                  {}) as Record<string, unknown>,
               };
               setMessages((prev) =>
                 prev.map((m) =>

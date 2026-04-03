@@ -70,6 +70,12 @@ class FilingState(TypedDict):
     anomaly_scores: Annotated[list[AnomalyScore], operator.add]
     generated_charts: Annotated[list[dict[str, Any]], operator.add]  # chart data for Streamlit rendering
 
+    # Valuation metrics (from valuation_agent)
+    valuation_metrics: Annotated[list[dict[str, Any]], operator.add]
+
+    # Sentiment scores (from sentiment_agent)
+    sentiment_scores: Annotated[list[dict[str, Any]], operator.add]
+
     # Web search context (from Cortex Agent web search)
     web_context: str
     web_sources: Annotated[list[dict[str, str]], operator.add]  # clickable web source citations
@@ -80,3 +86,6 @@ class FilingState(TypedDict):
     # Output
     final_answer: str
     sources: list[dict[str, str]]  # citation references
+    follow_up_questions: list[str]  # suggested next questions
+    confidence_score: float  # 0.0-1.0 confidence in the answer
+    confidence_factors: dict[str, Any]  # breakdown of confidence scoring
