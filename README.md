@@ -8,13 +8,21 @@ SecSignal ingests SEC EDGAR filings for major companies (AAPL, AMZN, GOOGL, MSFT
 
 ## Key Features
 
-- **Multi-agent orchestration** — LangGraph supervisor classifies queries and fans out to specialist agents (trend, comparison, anomaly, general, web search) in parallel
+- **Multi-agent orchestration** — LangGraph supervisor classifies queries and fans out to 8 specialist agents (trend, comparison, anomaly, general, web search, valuation, sentiment, peer group) in parallel
 - **Real-time streaming** — Server-Sent Events stream agent execution trajectory step-by-step as agents work
-- **Dynamic chart generation** — Revenue trends, margin comparisons, risk distributions, and more rendered as interactive Recharts visualizations
+- **Dynamic chart generation** — Revenue trends, margin comparisons, risk distributions, radar profiles, and more rendered as interactive Recharts visualizations
+- **Valuation analysis** — P/E ratios, gross/operating margins, growth-implied multiples, and basic DCF estimates from filing financials
+- **Sentiment & tone analysis** — Scores MD&A and risk factor sections for bullish/neutral/bearish tone shifts across filings
+- **Peer group comparison** — Benchmarks companies against sector peers with LLM-driven peer identification and multi-metric radar charts
 - **Semantic search** — Cortex Search over 1,189 filing text chunks with ticker/date filtering
 - **Web search fallback** — Unknown tickers automatically trigger Cortex Agent web search, with results clearly attributed
 - **Input guardrails** — LLM-based pre-flight check rejects off-topic queries, prompt injection attempts, and gibberish before agents execute
 - **Anomaly detection** — Z-score based anomaly scoring flags unusual financial metric changes
+- **Follow-up suggestions** — LLM-generated follow-up questions after each answer to guide deeper exploration
+- **Confidence scoring** — Weighted confidence score (source coverage, relevance quality, data richness) displayed per answer
+- **Ticker autocomplete** — Client-side ticker matching with keyboard navigation in the query input
+- **PDF export** — One-click export of analysis results (answer, charts, anomalies) to a print-friendly PDF
+- **Portfolio watchlist** — localStorage-backed watchlist with per-ticker quick-query buttons and bulk comparison
 - **Conversation memory** — Multi-turn chat with context summarization for follow-up questions
 - **Evaluation framework** — Automated scoring of answer quality, source attribution, and chart relevance
 
@@ -43,7 +51,8 @@ SecSignal ingests SEC EDGAR filings for major companies (AAPL, AMZN, GOOGL, MSFT
                      │   │  Cortex COMPLETE (claude-sonnet)  │        │
                      │   │  • Extract tickers & time range  │        │
                      │   │  • Classify: trend/comparison/   │        │
-                     │   │    anomaly/general               │        │
+                     │   │    anomaly/general/valuation/    │        │
+                     │   │    sentiment/peer_group          │        │
                      │   │  • Validate tickers against DB   │        │
                      │   │  • Build execution plan          │        │
                      │   └──────────────┬───────────────────┘        │
@@ -53,26 +62,27 @@ SecSignal ingests SEC EDGAR filings for major companies (AAPL, AMZN, GOOGL, MSFT
                      │   │          ROUTE_PLAN              │        │
                      │   │  LangGraph Send() fan-out        │        │
                      │   │  Parallel agent dispatch          │        │
-                     │   └──┬───────┬───────┬───────┬───────┘        │
-                     │      │       │       │       │                │
-                     │      ▼       ▼       ▼       ▼                │
-                     │   ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐            │
-                     │   │TREND│ │COMP │ │ANOM │ │ WEB │            │
-                     │   │AGENT│ │AGENT│ │AGENT│ │AGENT│            │
-                     │   └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘            │
-                     │      │       │       │       │                │
-                     │      ├───────┴───────┘       │                │
-                     │      │ (results merge via     │                │
-                     │      │  operator.add)         │                │
-                     │      ▼                        ▼                │
-                     │   ┌──────────────────────────────────┐        │
-                     │   │          SYNTHESIZER             │        │
-                     │   │  Cortex COMPLETE (claude-sonnet)  │        │
-                     │   │  • Merge all agent results       │        │
-                     │   │  • Generate cited markdown       │        │
-                     │   │  • Extract chart data for UI     │        │
-                     │   │  • Flag unknown tickers          │        │
-                     │   └──────────────────────────────────┘        │
+                     │   └──┬────┬────┬────┬────┬────┬────┬────┬──┘    │
+                     │      │    │    │    │    │    │    │    │        │
+                     │      ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼        │
+                     │   ┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐│
+                     │   │TRND││COMP││ANOM││GENL││ WEB││ VAL││SENT││PEER││
+                     │   │AGNT││AGNT││AGNT││AGNT││AGNT││AGNT││AGNT││AGNT││
+                     │   └──┬─┘└──┬─┘└──┬─┘└──┬─┘└──┬─┘└──┬─┘└──┬─┘└──┬─┘│
+                     │      │     │     │     │     │     │     │     │  │
+                     │      └─────┴─────┴─────┴──┬──┴─────┴─────┴─────┘  │
+                     │                (results merge via operator.add)    │
+                     │                           ▼                        │
+                     │   ┌──────────────────────────────────┐            │
+                     │   │          SYNTHESIZER             │            │
+                     │   │  Cortex COMPLETE (claude-sonnet)  │            │
+                     │   │  • Merge all agent results       │            │
+                     │   │  • Generate cited markdown       │            │
+                     │   │  • Extract chart data for UI     │            │
+                     │   │  • Confidence scoring            │            │
+                     │   │  • Follow-up question generation │            │
+                     │   │  • Flag unknown tickers          │            │
+                     │   └──────────────────────────────────┘            │
                      └───────────────────────────────────────────────┘
 ```
 
@@ -84,9 +94,12 @@ SecSignal ingests SEC EDGAR filings for major companies (AAPL, AMZN, GOOGL, MSFT
 | **Trend Agent** | Single-company time-series analysis (revenue growth, margin trends, cash flow) | SQL Tool, Semantic Tool, Chart Generator |
 | **Comparison Agent** | Multi-company side-by-side comparison (metrics, risk factors, competitive positioning) | SQL Tool, Semantic Tool, Chart Generator |
 | **Anomaly Agent** | Statistical anomaly detection using z-scores over rolling windows | SQL Tool, Anomaly Scorer, Chart Generator |
-| **General Agent** | Open-ended financial questions that don't fit trend/comparison/anomaly patterns | Semantic Tool, SQL Tool |
+| **General Agent** | Open-ended financial questions that don't fit other agent patterns | Semantic Tool, SQL Tool |
 | **Web Search Agent** | Real-time market data, news, and coverage for unknown tickers or current events | Cortex Agent (AGENT_RUN), Chart Generator |
-| **Synthesizer** | Merges all agent outputs into a single cited answer with charts and source attributions | Cortex COMPLETE |
+| **Valuation Agent** | P/E ratios, gross/operating margins, growth-implied multiples, basic DCF estimates | SQL Tool, Semantic Tool, Chart Generator |
+| **Sentiment Agent** | MD&A and risk factor tone analysis, bullish/neutral/bearish scoring across filings | Semantic Tool, Cortex COMPLETE |
+| **Peer Group Agent** | Sector peer identification, multi-metric benchmarking with radar charts | SQL Tool, Semantic Tool, Chart Generator |
+| **Synthesizer** | Merges all agent outputs into a single cited answer with charts, confidence scoring, and follow-up question generation | Cortex COMPLETE |
 
 ### Snowflake Cortex AI Functions Used
 
@@ -144,7 +157,10 @@ SecSignal/
 │   │   ├── anomaly_agent.py        # Z-score anomaly detection specialist
 │   │   ├── general_agent.py        # Open-ended financial Q&A specialist
 │   │   ├── web_search_agent.py     # Cortex Agent web search + chart extraction
-│   │   ├── synthesizer.py          # Final answer synthesis with citations
+│   │   ├── valuation_agent.py      # P/E, margins, DCF valuation analysis
+│   │   ├── sentiment_agent.py      # MD&A tone and sentiment scoring
+│   │   ├── peer_group_agent.py     # Sector peer comparison with radar charts
+│   │   ├── synthesizer.py          # Final answer synthesis with citations, confidence scores, follow-ups
 │   │   ├── guardrails.py           # LLM-based input validation (pre-graph)
 │   │   ├── connection.py           # Thread-safe Snowflake connection singleton
 │   │   └── tools/                  # Shared agent tools
@@ -190,13 +206,14 @@ SecSignal/
 │       │   ├── architecture/       # Architecture documentation page
 │       │   └── layout.tsx          # Root layout + navigation
 │       ├── components/
-│       │   ├── query-input.tsx     # Search input with suggestions
+│       │   ├── query-input.tsx     # Search input with ticker autocomplete + keyboard nav
 │       │   ├── thread-message.tsx  # Message bubble + agent trajectory
-│       │   ├── analysis-result.tsx # Full result with collapsible sources
+│       │   ├── analysis-result.tsx # Full result with sources, PDF export, follow-ups
 │       │   ├── chart-panel.tsx     # Recharts rendering (area, bar, pie, radar, composed)
 │       │   ├── anomaly-card.tsx    # Anomaly score display
 │       │   ├── source-list.tsx     # Filing source citations
-│       │   └── web-source-list.tsx # Web source citations with links
+│       │   ├── web-source-list.tsx # Web source citations with links
+│       │   └── watchlist.tsx       # Portfolio watchlist with quick-query buttons
 │       └── lib/
 │           ├── api.ts              # Types + API client
 │           └── use-query-stream.ts # SSE streaming hook with conversation memory
@@ -377,13 +394,16 @@ The project is configured for deployment with **Vercel** (frontend) + **Render**
 | Field | Type | Description |
 |-------|------|-------------|
 | query | string | Original query |
-| query_type | string | Classification (trend, comparison, anomaly, general) |
+| query_type | string | Classification (trend, comparison, anomaly, general, valuation, sentiment, peer_group) |
 | tickers | string[] | Extracted company tickers |
 | answer | string | Markdown-formatted cited answer |
 | sources | object[] | Filing section citations |
 | generated_charts | object[] | Chart data for Recharts rendering |
 | anomalies | object[] | Z-score anomaly flags |
 | web_sources | object[] | Web search citations |
+| follow_up_questions | string[] | LLM-generated follow-up question suggestions |
+| confidence_score | number | Weighted confidence score (0–1) for the answer |
+| confidence_factors | object | Breakdown: source_coverage, relevance_quality, data_richness |
 
 ### SSE Events (streaming endpoint)
 
@@ -403,6 +423,9 @@ The project is configured for deployment with **Vercel** (frontend) + **Render**
 | **Trend** | "How has NVDA's revenue grown over the last 3 years?" |
 | **Comparison** | "Compare AAPL and MSFT operating margins and R&D spending" |
 | **Anomaly** | "Flag any unusual changes in TSLA's risk factors between filings" |
+| **Valuation** | "What is MSFT's P/E ratio and how do its margins compare to historical averages?" |
+| **Sentiment** | "Analyze the tone of NVDA's latest MD&A — is management bullish or cautious?" |
+| **Peer Group** | "How does AMZN stack up against its sector peers on revenue growth and margins?" |
 | **General** | "What are the key risk factors for cloud computing companies?" |
 | **Cross-company** | "Which company has better free cash flow generation — AMZN or GOOGL?" |
 | **Unknown ticker** | "How does AMD compare to NVDA in the GPU market?" (triggers web fallback for AMD) |
