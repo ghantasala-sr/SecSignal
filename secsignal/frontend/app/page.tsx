@@ -18,7 +18,7 @@ export default function Home() {
   // Hydrate access code from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem(ACCESS_CODE_KEY);
-    setAccessCode(stored);
+    setAccessCode(stored ?? "");
   }, []);
 
   const hasMessages = messages.length > 0;
