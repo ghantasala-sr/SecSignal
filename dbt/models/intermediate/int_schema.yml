@@ -2,44 +2,97 @@ version: 2
 
 models:
   - name: int_parsed_sections
-    description: "Sections enriched with company and filing context — primary source for RAG embeddings"
+    description: >
+      Filing sections enriched with company and filing context via a three-way
+      JOIN (stg_sections → stg_filings → stg_companies). Adds TICKER,
+      COMPANY_NAME, FILING_TYPE, FILING_DATE, and a computed FISCAL_QUARTER.
+      This is the primary input for the Arctic embed text embedding pipeline
+      and the Cortex Search SEARCH_CORPUS table. One row per section per filing.
     columns:
       - name: SECTION_ID
-        tests:
-          - unique
-          - not_null
-      - name: TICKER
-        tests:
-          - not_null
-      - name: FILING_TYPE
-        tests:
-          - not_null
-      - name: FILING_DATE
-        tests:
-          - not_null
-      - name: SECTION_KEY
-        tests:
-          - not_null
-      - name: SECTION_TEXT
-        tests:
-          - not_null
-      - name: WORD_COUNT
-        tests:
-          - not_null
-
-  - name: int_chart_extracts
-    description: "Chart extracts enriched with filing and image context"
-    columns:
-      - name: EXTRACT_ID
+        description: "Composite key '{FILING_ID}_{SECTION_KEY}'. Primary key — unique per section per filing."
         tests:
           - unique
           - not_null
       - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
+      - name: TICKER
+        description: "Uppercased stock ticker symbol from the filing record (e.g. AAPL, MSFT)."
+        tests:
+          - not_null
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'. Inherited from stg_filings."
+        tests:
+          - not_null
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC. Inherited from stg_filings."
+        tests:
+          - not_null
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies (e.g. 'Apple Inc.')."
+      - name: SECTION_KEY
+        description: "Lowercased section identifier (e.g. 'item_1a', 'item_7', 'item_8'). Used to filter by SEC Item number."
+        tests:
+          - not_null
+      - name: SECTION_TITLE
+        description: "Human-readable section heading extracted from the filing HTML."
+      - name: SECTION_TEXT
+        description: "Full text content of the section. Fed into the embedding pipeline and Cortex Search corpus."
+        tests:
+          - not_null
+      - name: WORD_COUNT
+        description: "Number of words in SECTION_TEXT. Used by fct_risk_factors for WORD_COUNT_DELTA change detection."
+        tests:
+          - not_null
+      - name: FISCAL_QUARTER
+        description: "Computed as DATE_TRUNC('quarter', FILING_DATE). Groups filings into calendar quarters for trend analysis."
+
+  - name: int_chart_extracts
+    description: >
+      Chart extraction results enriched with filing, company, and image
+      context via a four-way JOIN (stg_chart_extracts → stg_filing_images →
+      stg_filings → stg_companies). Adds TICKER, COMPANY_NAME, FILING_TYPE,
+      FILING_DATE, IMAGE_FORMAT, PAGE_NUMBER, IMAGE_DESCRIPTION, and a
+      computed FISCAL_QUARTER. One row per successfully analyzed chart image.
+    columns:
+      - name: EXTRACT_ID
+        description: "Unique identifier for the AI_EXTRACT result. Primary key."
+        tests:
+          - unique
+          - not_null
+      - name: IMAGE_ID
+        description: "Foreign key to stg_filing_images. Identifies which image was analyzed."
+      - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
         tests:
           - not_null
       - name: TICKER
+        description: "Uppercased stock ticker symbol from the filing record."
         tests:
           - not_null
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'."
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies."
+      - name: CHART_TYPE
+        description: "Detected chart type: 'bar', 'pie', 'line', 'area', 'table', or 'other'."
+      - name: CHART_TITLE
+        description: "Title or caption extracted from the chart image by AI_EXTRACT."
+      - name: EXTRACTED_DATA
+        description: "VARIANT (JSON) containing axis labels, data series, and numeric values extracted from the chart."
+      - name: DATA_POINTS
+        description: "Total number of numeric data points extracted from the chart."
       - name: CONFIDENCE_SCORE
+        description: "AI_EXTRACT model confidence in the extraction quality (0.0 to 1.0)."
         tests:
           - not_null
+      - name: IMAGE_FORMAT
+        description: "Image format from stg_filing_images (e.g. 'png', 'jpg')."
+      - name: PAGE_NUMBER
+        description: "Page number where the chart appears in the filing document."
+      - name: IMAGE_DESCRIPTION
+        description: "Alt text or AI-generated description of the chart image (aliased from stg_filing_images.DESCRIPTION)."
+      - name: FISCAL_QUARTER
+        description: "Computed as DATE_TRUNC('quarter', FILING_DATE). Groups charts into calendar quarters."

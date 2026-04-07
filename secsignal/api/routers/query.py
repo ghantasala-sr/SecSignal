@@ -92,7 +92,7 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-@limiter.limit("10/minute")
+@limiter.limit("5/day")
 async def query_endpoint(request: Request, body: QueryRequest) -> QueryResponse:
     """Run a natural language query through the SecSignal agent system.
 
@@ -139,7 +139,7 @@ async def query_endpoint(request: Request, body: QueryRequest) -> QueryResponse:
 
 
 @router.post("/query/stream")
-@limiter.limit("10/minute")
+@limiter.limit("5/day")
 async def query_stream_endpoint(request: Request, body: QueryRequest) -> StreamingResponse:
     """Stream query execution with real-time agent trajectory events.
 

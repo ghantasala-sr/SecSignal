@@ -2,97 +2,188 @@ version: 2
 
 models:
   - name: stg_companies
-    description: "Cleaned company master — CIK, ticker, name"
+    description: >
+      Cleaned company master table. Applies UPPER(TRIM()) to ticker symbols
+      and TRIM() to company names. Filters out rows with NULL CIK or TICKER.
+      One row per company — used as the dimensional backbone joining filings
+      to tickers throughout the project.
     columns:
       - name: CIK
+        description: "SEC Central Index Key — 10-digit zero-padded unique company identifier. Primary key."
         tests:
           - unique
           - not_null
       - name: TICKER
+        description: "Uppercased, trimmed stock ticker symbol (e.g. AAPL, MSFT, NVDA)."
         tests:
           - not_null
       - name: COMPANY_NAME
+        description: "Trimmed legal entity name as registered with the SEC."
         tests:
           - not_null
+      - name: SIC_CODE
+        description: "Standard Industrial Classification code for the company's industry."
+      - name: STATE
+        description: "State of incorporation or principal office."
+      - name: FISCAL_YEAR_END
+        description: "Fiscal year end as MMDD string."
+      - name: LOADED_AT
+        description: "Ingestion timestamp (NTZ)."
 
   - name: stg_filings
-    description: "Cleaned filing metadata — filtered to 10-K, 10-Q, 8-K"
+    description: >
+      Cleaned filing metadata. Applies UPPER(TRIM()) to ticker and filing
+      type. Filters to only 10-K, 10-Q, and 8-K form types and excludes
+      rows with NULL FILING_ID. One row per SEC filing — the central fact
+      table linking companies to their disclosure documents.
     columns:
       - name: FILING_ID
+        description: "SEC accession number — unique identifier for each filing. Primary key."
         tests:
           - unique
           - not_null
       - name: CIK
+        description: "Foreign key to stg_companies. Identifies the filing company."
         tests:
           - not_null
           - relationships:
               to: ref('stg_companies')
               field: CIK
       - name: TICKER
+        description: "Uppercased ticker symbol denormalized from the filing record."
         tests:
           - not_null
       - name: FILING_TYPE
+        description: "SEC form type: '10-K' (annual report), '10-Q' (quarterly report), or '8-K' (current event report)."
         tests:
           - not_null
           - accepted_values:
               values: ['10-K', '10-Q', '8-K']
       - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
         tests:
           - not_null
+      - name: PRIMARY_DOCUMENT
+        description: "Filename of the primary document in the filing (e.g. 'aapl-20240928.htm')."
+      - name: DOCUMENT_URL
+        description: "Full EDGAR URL to the primary document."
+      - name: GCS_URI
+        description: "Google Cloud Storage URI where the raw document is archived."
+      - name: FILE_SIZE_BYTES
+        description: "Size of the downloaded document in bytes."
+      - name: LOADED_AT
+        description: "Ingestion timestamp (NTZ)."
 
   - name: stg_sections
-    description: "Cleaned filing sections — text > 50 chars, non-null"
+    description: >
+      Cleaned filing sections with text quality gate. Applies LOWER(TRIM())
+      to section keys and TRIM() to titles. Filters out sections where
+      SECTION_TEXT is NULL or shorter than 50 characters — this removes
+      empty stubs, boilerplate headers, and parsing artifacts. The primary
+      input for the embedding pipeline and Cortex Search corpus.
     columns:
       - name: SECTION_ID
+        description: "Composite key '{FILING_ID}_{SECTION_KEY}' — unique per section per filing. Primary key."
         tests:
           - unique
           - not_null
       - name: FILING_ID
+        description: "Foreign key to stg_filings. Identifies which filing this section belongs to."
         tests:
           - not_null
           - relationships:
               to: ref('stg_filings')
               field: FILING_ID
       - name: SECTION_KEY
+        description: "Lowercased, trimmed section identifier (e.g. 'item_1', 'item_1a', 'item_7', 'item_8')."
         tests:
           - not_null
+      - name: SECTION_TITLE
+        description: "Human-readable section heading extracted from the filing HTML."
       - name: SECTION_TEXT
+        description: "Full text content of the section. Only rows with LENGTH > 50 pass the quality gate."
         tests:
           - not_null
       - name: WORD_COUNT
+        description: "Number of whitespace-delimited words in SECTION_TEXT. Used for anomaly detection (word count delta)."
         tests:
           - not_null
+      - name: START_OFFSET
+        description: "Character offset where this section begins in the original document."
+      - name: END_OFFSET
+        description: "Character offset where this section ends in the original document."
+      - name: LOADED_AT
+        description: "Ingestion timestamp (NTZ)."
 
   - name: stg_filing_images
-    description: "Cleaned chart/graph image metadata"
+    description: >
+      Cleaned chart/graph image metadata. Filters out rows with NULL
+      IMAGE_ID or missing image data (IMAGE_DATA_B64 IS NULL). Computes
+      ESTIMATED_SIZE_BYTES from the base64 string length. Does not carry
+      the raw base64 data forward — only metadata for joins. The raw image
+      data remains in the source table for retrieval at query time.
     columns:
       - name: IMAGE_ID
+        description: "Unique identifier for each extracted image. Primary key."
         tests:
           - unique
           - not_null
       - name: FILING_ID
+        description: "Foreign key to stg_filings. Identifies which filing the image came from."
         tests:
           - not_null
           - relationships:
               to: ref('stg_filings')
               field: FILING_ID
+      - name: IMAGE_INDEX
+        description: "Zero-based index of this image within the filing (order of appearance in HTML)."
+      - name: IMAGE_FORMAT
+        description: "Image format (e.g. 'png', 'jpg', 'gif')."
+      - name: PAGE_NUMBER
+        description: "Page number where the image appears in the document."
+      - name: BOUNDING_BOX
+        description: "JSON coordinates of the image within the page layout."
+      - name: DESCRIPTION
+        description: "Alt text or AI-generated description of the image."
+      - name: ESTIMATED_SIZE_BYTES
+        description: "Estimated binary size computed as LENGTH(IMAGE_DATA_B64) * 3 / 4."
+      - name: LOADED_AT
+        description: "Ingestion timestamp (NTZ)."
 
   - name: stg_chart_extracts
-    description: "Cleaned chart extract metadata"
+    description: >
+      Cleaned chart extract metadata from AI_EXTRACT results. Applies TRIM()
+      to chart type and title. Filters to rows with non-null EXTRACT_ID
+      and CONFIDENCE_SCORE >= 0. One row per successfully analyzed chart image.
     columns:
       - name: EXTRACT_ID
+        description: "Unique identifier for the extraction result. Primary key."
         tests:
           - unique
           - not_null
       - name: IMAGE_ID
+        description: "Foreign key to stg_filing_images. Identifies which image was analyzed."
         tests:
           - not_null
           - relationships:
               to: ref('stg_filing_images')
               field: IMAGE_ID
       - name: FILING_ID
+        description: "Foreign key to stg_filings. Identifies which filing the chart belongs to."
         tests:
           - not_null
           - relationships:
               to: ref('stg_filings')
               field: FILING_ID
+      - name: CHART_TYPE
+        description: "Trimmed chart type detected by AI_EXTRACT: 'bar', 'pie', 'line', 'area', 'table', or 'other'."
+      - name: CHART_TITLE
+        description: "Trimmed title or caption extracted from the chart image."
+      - name: EXTRACTED_DATA
+        description: "VARIANT (JSON) with the full structured extraction: axis labels, data series, numeric values."
+      - name: DATA_POINTS
+        description: "Total number of numeric data points extracted from the chart."
+      - name: CONFIDENCE_SCORE
+        description: "AI_EXTRACT model confidence in the extraction quality (0.0 to 1.0)."
+      - name: LOADED_AT
+        description: "Ingestion timestamp (NTZ)."

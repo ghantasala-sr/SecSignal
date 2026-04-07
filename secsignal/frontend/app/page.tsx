@@ -1,20 +1,42 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryStream } from "@/lib/use-query-stream";
+import { ACCESS_CODE_KEY } from "@/lib/use-query-stream";
 import { QueryInput } from "@/components/query-input";
 import { ThreadMessage } from "@/components/thread-message";
-import { TrendingUp, GitCompareArrows, AlertTriangle, DollarSign, MessageSquare, Users } from "lucide-react";
+import { TrendingUp, GitCompareArrows, AlertTriangle, DollarSign, MessageSquare, Users, Lock } from "lucide-react";
 import { Watchlist } from "@/components/watchlist";
 
 export default function Home() {
   const { messages, loading, submit, cancel, retry, clearThread } = useQueryStream();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [accessCode, setAccessCode] = useState<string | null>(null);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState(false);
+
+  // Hydrate access code from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(ACCESS_CODE_KEY);
+    setAccessCode(stored);
+  }, []);
 
   const hasMessages = messages.length > 0;
 
   function handleQuery(query: string) {
     submit({ query });
+  }
+
+  function handleCodeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = codeInput.trim();
+    if (!trimmed) {
+      setCodeError(true);
+      return;
+    }
+    localStorage.setItem(ACCESS_CODE_KEY, trimmed);
+    setAccessCode(trimmed);
+    setCodeError(false);
   }
 
   // Auto-scroll to bottom when new messages arrive or content updates
@@ -26,6 +48,52 @@ export default function Home() {
 
   return (
     <div className="flex flex-col flex-1">
+      {/* Access code gate */}
+      {accessCode === null ? (
+        // Still hydrating from localStorage — show nothing to avoid flash
+        null
+      ) : !accessCode ? (
+        <div className="flex flex-col items-center justify-center min-h-full px-6 py-16">
+          <div className="max-w-sm w-full space-y-6 text-center">
+            <div className="flex justify-center">
+              <div className="rounded-full bg-primary/10 p-4">
+                <Lock className="w-8 h-8 text-primary" />
+              </div>
+            </div>
+            <div>
+              <h2 className="font-heading text-2xl tracking-tight">SecSignal</h2>
+              <p className="text-muted-foreground text-sm mt-2">
+                Enter the access code to start analyzing SEC filings.
+              </p>
+            </div>
+            <form onSubmit={handleCodeSubmit} className="space-y-3">
+              <input
+                type="password"
+                value={codeInput}
+                onChange={(e) => { setCodeInput(e.target.value); setCodeError(false); }}
+                placeholder="Access code"
+                autoFocus
+                className={`w-full rounded-lg border bg-background px-4 py-2.5 text-sm outline-none transition-colors focus:border-primary ${
+                  codeError ? "border-red-500" : "border-border"
+                }`}
+              />
+              {codeError && (
+                <p className="text-xs text-red-500">Please enter a valid access code.</p>
+              )}
+              <button
+                type="submit"
+                className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Continue
+              </button>
+            </form>
+            <p className="text-[11px] text-muted-foreground/50">
+              Limited to 5 queries per day &middot; Powered by Snowflake Cortex
+            </p>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Scrollable content area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {!hasMessages ? (
@@ -145,9 +213,11 @@ export default function Home() {
       {!hasMessages && (
         <footer className="border-t border-border/30 px-6 py-3 shrink-0">
           <div className="max-w-5xl mx-auto text-center text-[11px] text-muted-foreground/50">
-            Powered by Snowflake Cortex &middot; Agentic RAG
+            Powered by Snowflake Cortex &middot; Agentic RAG &middot; 5 queries/day
           </div>
         </footer>
+      )}
+      </>
       )}
     </div>
   );

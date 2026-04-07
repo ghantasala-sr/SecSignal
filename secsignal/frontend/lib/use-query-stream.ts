@@ -15,6 +15,15 @@ const STREAM_TIMEOUT_MS = 300_000; // 5 minutes
 /** localStorage key for persisted thread. */
 const STORAGE_KEY = "secsignal-thread";
 
+/** localStorage key for access code. */
+export const ACCESS_CODE_KEY = "secsignal_access_code";
+
+/** Read the stored access code (or empty string). */
+function getAccessCode(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(ACCESS_CODE_KEY) ?? "";
+}
+
 /** Call /api/summarize to condense a long answer. Falls back to truncation. */
 async function summarizeText(text: string): Promise<string> {
   try {
@@ -208,10 +217,24 @@ export function useQueryStream() {
 
         const res = await fetch(`${STREAM_BASE}/api/query/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-Access-Code": getAccessCode(),
+          },
           body: JSON.stringify(body),
           signal: controller.signal,
         });
+
+        if (res.status === 401) {
+          // Invalid or missing access code — clear it so the gate re-appears
+          localStorage.removeItem(ACCESS_CODE_KEY);
+          throw new Error("Invalid access code. Please refresh and enter a valid code.");
+        }
+
+        if (res.status === 429) {
+          const detail = await res.json().catch(() => ({ detail: "Rate limit exceeded." }));
+          throw new Error(detail.detail || "Daily query limit (5) reached. Please try again tomorrow.");
+        }
 
         if (!res.ok) {
           const detail = await res.text();

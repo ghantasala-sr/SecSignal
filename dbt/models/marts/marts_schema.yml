@@ -2,61 +2,169 @@ version: 2
 
 models:
   - name: fct_risk_factors
-    description: "Risk factor text per company per filing — used for anomaly detection and semantic search"
+    description: >
+      Risk factor text (SEC Item 1A) per company per filing. Filters
+      int_parsed_sections to SECTION_KEY = 'item_1a'. Computes WORD_COUNT_DELTA
+      using LAG() to detect significant changes in risk disclosure length
+      between consecutive filings for the same ticker — a signal used by the
+      anomaly_agent for change detection. Key mart for semantic search and
+      the sentiment_agent's risk scoring pipeline.
     columns:
       - name: RISK_FACTOR_ID
+        description: "Primary key — aliased from SECTION_ID ('{FILING_ID}_item_1a'). Unique per filing."
         tests:
           - unique
           - not_null
       - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
         tests:
           - not_null
       - name: TICKER
+        description: "Uppercased stock ticker symbol (e.g. AAPL, MSFT)."
         tests:
           - not_null
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies."
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'."
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
+      - name: FISCAL_QUARTER
+        description: "DATE_TRUNC('quarter', FILING_DATE). Groups filings into calendar quarters."
+      - name: SECTION_TITLE
+        description: "Human-readable heading for the risk factors section."
       - name: RISK_FACTOR_TEXT
+        description: "Full text of SEC Item 1A (Risk Factors). Aliased from SECTION_TEXT. Used for embedding and sentiment scoring."
         tests:
           - not_null
       - name: WORD_COUNT
+        description: "Number of words in RISK_FACTOR_TEXT."
         tests:
           - not_null
+      - name: PREV_WORD_COUNT
+        description: "Word count of the previous filing's Item 1A for the same ticker (via LAG window function). NULL for the first filing."
+      - name: WORD_COUNT_DELTA
+        description: >
+          Difference between current and previous WORD_COUNT (current - previous).
+          Large positive values indicate expanded risk disclosures; negative values
+          indicate removed risks. Zero for the first filing per ticker.
 
   - name: fct_financials
-    description: "Financial sections per company per quarter (placeholder for XBRL extraction)"
+    description: >
+      Financial statement sections (SEC Item 8) per company per quarter.
+      Currently a placeholder — filters int_parsed_sections to
+      SECTION_KEY = 'item_8' and passes through the section text and metadata.
+      Will be extended with XBRL taxonomy parsing to extract structured
+      revenue, EPS, debt ratios, and other financial metrics. Queried by
+      the trend_agent and valuation_agent for financial data.
     columns:
       - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
         tests:
           - not_null
       - name: TICKER
+        description: "Uppercased stock ticker symbol."
         tests:
           - not_null
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies."
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'."
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
+      - name: FISCAL_QUARTER
+        description: "DATE_TRUNC('quarter', FILING_DATE)."
       - name: SECTION_KEY
+        description: "Always 'item_8' (Financial Statements and Supplementary Data)."
         tests:
           - not_null
           - accepted_values:
               values: ['item_8']
+      - name: SECTION_TITLE
+        description: "Human-readable heading for the financial statements section."
+      - name: WORD_COUNT
+        description: "Number of words in the Item 8 section text."
 
   - name: fct_chart_data
-    description: "Structured data extracted from filing charts"
+    description: >
+      Structured data extracted from filing chart images. Passthrough from
+      int_chart_extracts — provides a business-friendly interface for querying
+      chart types, extracted numeric data, and confidence scores by ticker
+      and filing date. Used by the trend_agent to supplement narrative
+      financial analysis with visual data from charts and graphs.
     columns:
       - name: EXTRACT_ID
+        description: "Primary key — unique identifier for each AI_EXTRACT result."
         tests:
           - unique
           - not_null
-      - name: FILING_ID
-        tests:
-          - not_null
-
-  - name: dim_filing_images
-    description: "Dimension table mapping chart/graph images to filings and companies"
-    columns:
       - name: IMAGE_ID
-        tests:
-          - unique
-          - not_null
+        description: "Foreign key to dim_filing_images. Identifies the source image."
       - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
         tests:
           - not_null
       - name: TICKER
+        description: "Uppercased stock ticker symbol."
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies."
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'."
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
+      - name: FISCAL_QUARTER
+        description: "DATE_TRUNC('quarter', FILING_DATE)."
+      - name: CHART_TYPE
+        description: "Detected chart type: 'bar', 'pie', 'line', 'area', 'table', or 'other'."
+      - name: CHART_TITLE
+        description: "Title or caption extracted from the chart image."
+      - name: EXTRACTED_DATA
+        description: "VARIANT (JSON) with structured extraction: axis labels, data series, numeric values."
+      - name: DATA_POINTS
+        description: "Total number of numeric data points extracted."
+      - name: CONFIDENCE_SCORE
+        description: "AI_EXTRACT model confidence (0.0 to 1.0)."
+      - name: IMAGE_DESCRIPTION
+        description: "Alt text or AI-generated description of the chart image."
+      - name: PAGE_NUMBER
+        description: "Page number where the chart appears in the filing."
+
+  - name: dim_filing_images
+    description: >
+      Dimension table mapping chart/graph images to filings and companies.
+      Joins stg_filing_images with stg_filings and stg_companies. Provides
+      image metadata (format, page, size, description) without the raw
+      base64 data. Used for lookups when the API serves chart images via
+      the /api/charts/{image_id} endpoint.
+    columns:
+      - name: IMAGE_ID
+        description: "Primary key — unique identifier for each extracted image."
+        tests:
+          - unique
+          - not_null
+      - name: FILING_ID
+        description: "SEC accession number. Foreign key to stg_filings."
         tests:
           - not_null
+      - name: TICKER
+        description: "Uppercased stock ticker symbol."
+        tests:
+          - not_null
+      - name: FILING_TYPE
+        description: "SEC form type: '10-K', '10-Q', or '8-K'."
+      - name: FILING_DATE
+        description: "Date the filing was accepted by the SEC."
+      - name: COMPANY_NAME
+        description: "Legal entity name from stg_companies."
+      - name: IMAGE_INDEX
+        description: "Zero-based position of the image within the filing document."
+      - name: IMAGE_FORMAT
+        description: "Image format (e.g. 'png', 'jpg', 'gif')."
+      - name: PAGE_NUMBER
+        description: "Page number where the image appears in the document."
+      - name: DESCRIPTION
+        description: "Alt text or AI-generated description of the image content."
+      - name: ESTIMATED_SIZE_BYTES
+        description: "Estimated binary size computed from base64 string length."
+      - name: FISCAL_QUARTER
+        description: "DATE_TRUNC('quarter', FILING_DATE). Groups images into calendar quarters."

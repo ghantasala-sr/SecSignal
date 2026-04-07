@@ -2,41 +2,154 @@ version: 2
 
 sources:
   - name: raw
+    description: >
+      Raw ingested data from SEC EDGAR and GCS. Populated by the Airflow
+      `secsignal_ingest_filings` DAG (weekly on Sundays at 06:00 UTC) and
+      the `run_pipeline.py` script. All tables use MERGE upserts for
+      idempotent re-runs.
     database: SECSIGNAL
     schema: RAW
     tables:
       - name: raw_companies
-        description: "CIK → ticker mapping for SEC-registered companies"
+        description: >
+          Company master table mapping SEC CIK numbers to stock ticker symbols.
+          One row per company. Populated by resolving tickers via the EDGAR
+          `company_tickers.json` endpoint. Covers AAPL, AMZN, GOOGL, MSFT,
+          NVDA, and TSLA.
         columns:
           - name: CIK
+            description: "SEC Central Index Key — 10-digit zero-padded unique identifier for each filer."
             tests:
               - unique
               - not_null
+          - name: TICKER
+            description: "Stock ticker symbol (e.g. AAPL, MSFT). Uppercased and trimmed during ingestion."
+          - name: COMPANY_NAME
+            description: "Legal entity name as registered with the SEC (e.g. 'Apple Inc.')."
+          - name: SIC_CODE
+            description: "Standard Industrial Classification code identifying the company's industry sector."
+          - name: STATE
+            description: "State of incorporation or principal office as reported to the SEC."
+          - name: FISCAL_YEAR_END
+            description: "Month-day string (MMDD) indicating the company's fiscal year end."
+          - name: LOADED_AT
+            description: "Timestamp (NTZ) when the row was inserted or last updated by the ingestion pipeline."
+
       - name: raw_filings
-        description: "Filing metadata from EDGAR API"
+        description: >
+          Filing metadata fetched from the EDGAR Submissions API. One row per
+          filing (accession number). Includes document URLs and the GCS URI
+          where the raw HTML/XBRL was archived. Covers 10-K, 10-Q, and 8-K
+          form types.
         columns:
           - name: FILING_ID
+            description: "SEC accession number (e.g. '0000320193-24-000123') — unique identifier for each filing."
             tests:
               - unique
               - not_null
+          - name: CIK
+            description: "Foreign key to RAW_COMPANIES.CIK — identifies the filing company."
+          - name: TICKER
+            description: "Stock ticker symbol denormalized from the company record for query convenience."
+          - name: FILING_TYPE
+            description: "SEC form type — one of '10-K' (annual), '10-Q' (quarterly), or '8-K' (current event)."
+          - name: FILING_DATE
+            description: "Date the filing was accepted by the SEC (YYYY-MM-DD)."
+          - name: PRIMARY_DOCUMENT
+            description: "Filename of the primary document in the filing package (e.g. 'aapl-20240928.htm')."
+          - name: DOCUMENT_URL
+            description: "Full EDGAR URL to download the primary document from SEC Archives."
+          - name: GCS_URI
+            description: "Google Cloud Storage URI where the raw document was archived (gs://secsignal-raw/...)."
+          - name: FILE_SIZE_BYTES
+            description: "Size of the downloaded document in bytes."
+          - name: LOADED_AT
+            description: "Timestamp (NTZ) when the row was inserted or last updated."
+
       - name: raw_filing_sections
-        description: "Section-aware text extracted from filings"
+        description: >
+          Section-aware text extracted from filing HTML by the BeautifulSoup
+          parser. One row per section per filing. Sections follow the SEC
+          Item numbering: item_1 (Business), item_1a (Risk Factors),
+          item_7 (MD&A), item_7a (Market Risk), item_8 (Financial Statements),
+          etc. Text up to 16 MB per section.
         columns:
           - name: SECTION_ID
+            description: "Composite key: '{FILING_ID}_{SECTION_KEY}' — unique per section per filing."
             tests:
               - unique
               - not_null
+          - name: FILING_ID
+            description: "Foreign key to RAW_FILINGS.FILING_ID."
+          - name: SECTION_KEY
+            description: "Normalized section identifier (e.g. 'item_1', 'item_1a', 'item_7', 'item_8')."
+          - name: SECTION_TITLE
+            description: "Human-readable section title extracted from the filing HTML heading."
+          - name: SECTION_TEXT
+            description: "Full text content of the section (VARCHAR up to 16 MB). Used for embedding and search."
+          - name: WORD_COUNT
+            description: "Number of whitespace-delimited words in SECTION_TEXT."
+          - name: START_OFFSET
+            description: "Character offset where this section begins in the original HTML document."
+          - name: END_OFFSET
+            description: "Character offset where this section ends in the original HTML document."
+          - name: LOADED_AT
+            description: "Timestamp (NTZ) when the row was inserted."
+
       - name: filing_images
-        description: "Chart/graph images extracted via AI_PARSE_DOCUMENT"
+        description: >
+          Chart and graph images extracted from filing HTML by parsing <img>
+          tags and downloading from EDGAR. Image data stored as base64-encoded
+          strings. Used as input for chart analysis (AI_EXTRACT) and
+          cross-modal embedding (voyage-multimodal-3).
         columns:
           - name: IMAGE_ID
+            description: "Unique identifier for each extracted image (UUID-based)."
             tests:
               - unique
               - not_null
+          - name: FILING_ID
+            description: "Foreign key to RAW_FILINGS.FILING_ID — which filing this image came from."
+          - name: IMAGE_INDEX
+            description: "Zero-based index of this image within the filing (order of appearance)."
+          - name: IMAGE_DATA_B64
+            description: "Base64-encoded image binary data. Used for AI_EXTRACT and embedding."
+          - name: IMAGE_FORMAT
+            description: "Image format string (e.g. 'png', 'jpg', 'gif')."
+          - name: PAGE_NUMBER
+            description: "Page number where the image appears in the filing document."
+          - name: BOUNDING_BOX
+            description: "JSON object with coordinates of the image within the page layout (from AI_PARSE_DOCUMENT)."
+          - name: DESCRIPTION
+            description: "Alt text or generated description of the image content."
+          - name: LOADED_AT
+            description: "Timestamp (NTZ) when the row was inserted."
+
       - name: chart_extracts
-        description: "Structured data extracted from chart images via AI_EXTRACT"
+        description: >
+          Structured data extracted from chart images using Snowflake
+          CORTEX.AI_EXTRACT (Arctic-Extract vision-language model). Contains
+          chart type, title, axis labels, data series, and data point counts.
+          One row per image that was successfully analyzed.
         columns:
           - name: EXTRACT_ID
+            description: "Unique identifier for each extraction result (e.g. 'ext_a1b2c3d4e5f6')."
             tests:
               - unique
               - not_null
+          - name: IMAGE_ID
+            description: "Foreign key to FILING_IMAGES.IMAGE_ID — which image was analyzed."
+          - name: FILING_ID
+            description: "Foreign key to RAW_FILINGS.FILING_ID — which filing the chart belongs to."
+          - name: CHART_TYPE
+            description: "Detected chart type: 'bar', 'pie', 'line', 'area', 'table', or 'other'."
+          - name: CHART_TITLE
+            description: "Title or caption extracted from the chart image."
+          - name: EXTRACTED_DATA
+            description: "VARIANT (JSON) containing the full structured extraction: axis labels, data series, values."
+          - name: DATA_POINTS
+            description: "Total number of numeric data points extracted from the chart."
+          - name: CONFIDENCE_SCORE
+            description: "Model confidence in the extraction quality (0.0 to 1.0)."
+          - name: LOADED_AT
+            description: "Timestamp (NTZ) when the row was inserted."
