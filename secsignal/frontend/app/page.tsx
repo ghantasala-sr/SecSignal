@@ -11,14 +11,16 @@ import { Watchlist } from "@/components/watchlist";
 export default function Home() {
   const { messages, loading, submit, cancel, retry, clearThread } = useQueryStream();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [accessCode, setAccessCode] = useState<string | null>(null);
+  const [accessCode, setAccessCode] = useState("");
+  const [hydrated, setHydrated] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [codeError, setCodeError] = useState(false);
 
   // Hydrate access code from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(ACCESS_CODE_KEY);
-    setAccessCode(stored ?? "");
+    const stored = localStorage.getItem(ACCESS_CODE_KEY) ?? "";
+    setAccessCode(stored);
+    setHydrated(true);
   }, []);
 
   const hasMessages = messages.length > 0;
@@ -48,11 +50,8 @@ export default function Home() {
 
   return (
     <div className="flex flex-col flex-1">
-      {/* Access code gate */}
-      {accessCode === null ? (
-        // Still hydrating from localStorage — show nothing to avoid flash
-        null
-      ) : !accessCode ? (
+      {/* Access code gate — show when not yet authenticated */}
+      {!hydrated || !accessCode ? (
         <div className="flex flex-col items-center justify-center min-h-full px-6 py-16">
           <div className="max-w-sm w-full space-y-6 text-center">
             <div className="flex justify-center">
